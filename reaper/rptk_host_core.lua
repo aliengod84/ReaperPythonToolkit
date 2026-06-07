@@ -306,7 +306,7 @@ return function(root)
       }] = true
     end
     udp.poll(now)
-    preview.tick()
+    preview.tick(now)
     for client in pairs(host.clients) do
       if not client.handshake and now - client.accepted_at > 2 then client.close = true end
       read_client(client, now)
