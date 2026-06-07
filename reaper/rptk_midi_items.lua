@@ -107,6 +107,9 @@ return function(json, state, tracks)
     local target_guid = reaper.GetTrackGUID(target)
     local existing = owned_group(target)
     if existing then return existing end
+    if math.tointeger(reaper.GetMediaTrackInfo_Value(target, "I_FOLDERDEPTH")) > 0 then
+      return target
+    end
     local index = track_index(target)
     local old_depth = math.tointeger(reaper.GetMediaTrackInfo_Value(target, "I_FOLDERDEPTH"))
     reaper.InsertTrackAtIndex(index, true)
