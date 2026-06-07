@@ -1,5 +1,26 @@
 return function(root)
-  package.path = root .. "?.lua;" .. package.path
+  local path_separator = package.config:sub(3, 3)
+  local directory_separator = package.config:sub(1, 1)
+  local lua_directory = root .. "lua" .. directory_separator
+  package.path = table.concat({
+    lua_directory .. "?.lua",
+    lua_directory .. "?" .. directory_separator .. "init.lua",
+    lua_directory .. "socket" .. directory_separator .. "?.lua",
+    root .. "?.lua",
+    root .. "?" .. directory_separator .. "init.lua",
+    root .. "socket" .. directory_separator .. "?.lua",
+    package.path,
+  }, path_separator)
+  package.cpath = table.concat({
+    lua_directory .. "?.dll",
+    lua_directory .. "?" .. directory_separator .. "core.dll",
+    lua_directory .. "clibs" .. directory_separator .. "?.dll",
+    lua_directory .. "?.so",
+    lua_directory .. "?" .. directory_separator .. "core.so",
+    root .. "?.dll",
+    root .. "?.so",
+    package.cpath,
+  }, path_separator)
   local json = dofile(root .. "json.lua")
   local protocol = dofile(root .. "rptk_protocol.lua")(json)
   local sessions = dofile(root .. "rptk_sessions.lua")(protocol)
@@ -9,6 +30,7 @@ return function(root)
   local preview = dofile(root .. "rptk_preview.lua")(state, items)
   local udp = dofile(root .. "rptk_udp.lua")(sessions)
   local ok_socket, socket = pcall(require, "socket")
+  if not ok_socket then ok_socket, socket = pcall(require, "socket.core") end
 
   local host = {
     version = "0.1.0", socket = ok_socket and socket or nil,

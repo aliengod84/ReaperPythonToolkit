@@ -23,7 +23,7 @@ low-latency MIDI audition.
 ## Installation
 
 ```bash
-python -m pip install -e .
+python -m pip install -e C:\Github\ReaperPythonToolkit
 ```
 
 Install LuaSocket for the Lua version embedded in Reaper. Copy the complete
@@ -31,8 +31,10 @@ Install LuaSocket for the Lua version embedded in Reaper. Copy the complete
 action list > ReaScript: Load** to load `rptk_host.lua`. Run that one action.
 Run it again to request a clean stop.
 
-The repository intentionally does not bundle LuaSocket binaries. See
-[installation](docs/installation.md) for platform details.
+The repository intentionally does not bundle LuaSocket binaries. The host does
+support a project-local `reaper/lua/` directory, matching the layout previously
+used by Metal MIDI Generator v3. See
+[installation](docs/installation.md) for the exact files.
 
 ## Five-Minute Example
 
@@ -83,4 +85,3 @@ Headless CI uses a loopback fake host. Reaper behavior must also pass
 [the manual checklist](docs/manual-reaper-validation.md).
 
 License: MIT.
-
