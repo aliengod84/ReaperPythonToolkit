@@ -44,13 +44,35 @@ return function(root)
     if #client.outgoing > protocol.MAX_MESSAGE * 2 then client.close = true end
   end
 
+  -- LuaSocket send(data, i, j) returns the absolute 1-based index of the last
+  -- byte written within `data` (not a length), and on a non-blocking timeout
+  -- returns nil, "timeout", <last_index>. Pass the whole buffer with explicit
+  -- indices and advance a cursor by that index; never slice the buffer into a
+  -- fresh substring and treat the return as a length, or partial writes desync
+  -- and re-emit overlapping/stale memory. Chunk small to avoid large frames.
+  local SEND_CHUNK = 512
   local function flush(client)
     if client.outgoing == "" then return end
-    local chunk = client.outgoing:sub(1, 65536)
-    local sent, err, partial = client.socket:send(chunk)
-    local count = sent or partial or 0
-    if count > 0 then client.outgoing = client.outgoing:sub(count + 1) end
-    if err and err ~= "timeout" then client.close = true end
+    local cursor = 1
+    local total = #client.outgoing
+    for _ = 1, 64 do
+      if cursor > total then break end
+      local chunk_end = math.min(cursor + SEND_CHUNK - 1, total)
+      local sent, err, last_byte = client.socket:send(client.outgoing, cursor, chunk_end)
+      local before = cursor
+      if sent then
+        cursor = math.floor(sent) + 1
+      elseif err == "timeout" then
+        cursor = math.floor(tonumber(last_byte) or (cursor - 1)) + 1
+        if cursor <= before then break end
+        break
+      else
+        client.close = true
+        return
+      end
+      if cursor <= before then break end
+    end
+    if cursor > 1 then client.outgoing = client.outgoing:sub(cursor) end
   end
 
   local function close_client(client)
