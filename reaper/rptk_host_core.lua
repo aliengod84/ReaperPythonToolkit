@@ -44,35 +44,29 @@ return function(root)
     if #client.outgoing > protocol.MAX_MESSAGE * 2 then client.close = true end
   end
 
-  -- LuaSocket send(data, i, j) returns the absolute 1-based index of the last
-  -- byte written within `data` (not a length), and on a non-blocking timeout
-  -- returns nil, "timeout", <last_index>. Pass the whole buffer with explicit
-  -- indices and advance a cursor by that index; never slice the buffer into a
-  -- fresh substring and treat the return as a length, or partial writes desync
-  -- and re-emit overlapping/stale memory. Chunk small to avoid large frames.
-  local SEND_CHUNK = 512
+  -- This LuaSocket build's send() returns sent=0.0 (success, zero bytes) when
+  -- handed a large buffer, so whole-frame sends never drain and the client times
+  -- out on the handshake / state frames. It only makes progress on SMALL inputs.
+  -- Hand it a fixed-size substring per call (plain send returns a byte count, or
+  -- nil,"timeout",partial), advance the buffer by that count, and loop while
+  -- progress is made so a large frame drains across many small sends in one tick.
+  local SEND_CHUNK = 1024
   local function flush(client)
     if client.outgoing == "" then return end
-    local cursor = 1
-    local total = #client.outgoing
-    for _ = 1, 64 do
-      if cursor > total then break end
-      local chunk_end = math.min(cursor + SEND_CHUNK - 1, total)
-      local sent, err, last_byte = client.socket:send(client.outgoing, cursor, chunk_end)
-      local before = cursor
-      if sent then
-        cursor = math.floor(sent) + 1
-      elseif err == "timeout" then
-        cursor = math.floor(tonumber(last_byte) or (cursor - 1)) + 1
-        if cursor <= before then break end
-        break
-      else
+    for _ = 1, 8192 do
+      if client.outgoing == "" then break end
+      local chunk = client.outgoing:sub(1, SEND_CHUNK)
+      local sent, err, partial = client.socket:send(chunk)
+      local count = math.floor(tonumber(sent or partial) or 0)
+      if count > 0 then
+        client.outgoing = client.outgoing:sub(count + 1)
+      end
+      if not sent and err ~= "timeout" then
         client.close = true
         return
       end
-      if cursor <= before then break end
+      if count == 0 then break end  -- no progress this call; resume next tick
     end
-    if cursor > 1 then client.outgoing = client.outgoing:sub(cursor) end
   end
 
   local function close_client(client)
@@ -300,6 +294,9 @@ return function(root)
       local connection = host.server:accept()
       if not connection then break end
       connection:settimeout(0)
+      if connection.setoption then
+        pcall(function() connection:setoption("tcp-nodelay", true) end)
+      end
       host.clients[{
         socket = connection, buffer = "", outgoing = "", handshake = false,
         accepted_at = now, close = false,

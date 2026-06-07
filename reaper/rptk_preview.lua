@@ -83,7 +83,13 @@ return function(state, items)
     return current.origin + math.max(64, cycles) * current.phrase_length
   end
 
+  local function item_alive(resource)
+    return resource and resource.item and
+      reaper.ValidatePtr(resource.item, "MediaItem*")
+  end
+
   local function set_item_end(resource, ending_ppq)
+    if not item_alive(resource) then return end
     local start = reaper.GetMediaItemInfo_Value(resource.item, "D_POSITION")
     reaper.SetMediaItemInfo_Value(
       resource.item, "D_LENGTH", math.max(0, state.ppq_to_time(ending_ppq) - start)
@@ -91,6 +97,7 @@ return function(state, items)
   end
 
   local function configure_loop(resource)
+    if not item_alive(resource) then return end
     reaper.SetMediaItemInfo_Value(resource.item, "B_LOOPSRC", 1)
     reaper.SetMediaItemInfo_Value(resource.item, "C_BEATATTACHMODE", 1)
   end
@@ -247,7 +254,12 @@ return function(state, items)
     local playing = reaper.GetPlayState() & 1 == 1
     local remove = {}
     for id, current in pairs(preview.active) do
-      if not playing then
+      if not item_alive(current.resource) then
+        -- The preview item was deleted out from under us (e.g. the user changed
+        -- the riff or removed the item). Drop the stale preview instead of
+        -- crashing on its dead handle every tick.
+        remove[#remove + 1] = id
+      elseif not playing then
         if now - current.prepared_at > 0.5 then remove[#remove + 1] = id end
       else
         local play_seconds = reaper.GetPlayPosition()
