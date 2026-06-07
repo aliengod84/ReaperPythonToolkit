@@ -94,6 +94,10 @@ class AsyncReaperClient:
         self._lease_timeout = 5.0
         self._udp: MidiAuditionSender | None = None
         self._connect_lock = asyncio.Lock()
+        # Serialize writes so a heartbeat and a command write never interleave on
+        # the shared stream. The response-wait stays outside this lock so a slow
+        # reply cannot block other writers.
+        self._write_lock = asyncio.Lock()
 
     def on_status(self, callback: StatusCallback) -> None:
         self._status_callbacks.append(callback)
@@ -157,8 +161,9 @@ class AsyncReaperClient:
                 "required_capabilities": sorted(self.required_capabilities),
                 "optional_capabilities": sorted(self.optional_capabilities),
             }
-            self._writer.write(encode_message(hello))
-            await self._writer.drain()
+            async with self._write_lock:
+                self._writer.write(encode_message(hello))
+                await self._writer.drain()
             line = await asyncio.wait_for(self._reader.readline(), timeout=2.0)
             if not line:
                 raise HandshakeError("host closed during handshake")
@@ -272,8 +277,9 @@ class AsyncReaperClient:
         future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = (method, future)
         try:
-            self._writer.write(encode_message(request_envelope(request_id, method, body)))
-            await self._writer.drain()
+            async with self._write_lock:
+                self._writer.write(encode_message(request_envelope(request_id, method, body)))
+                await self._writer.drain()
             return await asyncio.wait_for(future, timeout or self.command_timeout)
         except TimeoutError as exc:
             raise CommandTimeoutError(f"timed out waiting for {method}") from exc
@@ -501,12 +507,26 @@ class AsyncReaperClient:
                 pass
 
     async def _heartbeat_loop(self) -> None:
+        # Tolerate a single slow response: a busy single-threaded host can defer a
+        # reply past the bare interval. Keep cadence at the interval but allow the
+        # probe itself more room than one interval. A transient command timeout
+        # must never end heartbeating -- only a genuine connection loss should,
+        # and that is driven by _read_loop -> _connection_lost (which cancels this
+        # task). Suiciding on the first timeout was the cause of the reconnect
+        # loop under normal command load.
+        probe_timeout = max(self._heartbeat_interval, self._lease_timeout / 2)
         while not self._closing:
             await asyncio.sleep(self._heartbeat_interval)
-            try:
-                await self.request("session.heartbeat", timeout=self._heartbeat_interval)
-            except Exception:
+            if self._closing or self._writer is None:
                 return
+            try:
+                await self.request("session.heartbeat", timeout=probe_timeout)
+            except CommandTimeoutError:
+                continue  # host briefly busy; keep probing
+            except (ConnectionLostError, OSError):
+                return  # real loss; teardown handled by _read_loop/_drop_connection
+            except Exception:
+                continue  # never suicide on an unexpected transient
 
     async def _freshness_loop(self) -> None:
         while not self._closing:
