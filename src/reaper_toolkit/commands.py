@@ -1,0 +1,11 @@
+STATE_GET = "state.get"
+TRANSPORT_SET = "transport.set"
+CURSOR_SET = "cursor.set"
+TRACK_CAPTURE_SELECTION = "track.capture_selection"
+TRACK_RESOLVE = "track.resolve"
+MIDI_ITEM_INSERT = "midi.item.insert"
+MIDI_ITEM_REPLACE = "midi.item.replace"
+MIDI_PREVIEW_PREPARE = "midi.preview.prepare"
+MIDI_PREVIEW_UPDATE = "midi.preview.update"
+MIDI_PREVIEW_STOP = "midi.preview.stop"
+

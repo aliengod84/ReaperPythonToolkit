@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aliengod84.github.io/ReaperPythonToolkit/schemas/envelope.schema.json",
+  "title": "RPTK post-handshake envelope",
+  "type": "object",
+  "required": ["protocol", "protocol_major", "type"],
+  "properties": {
+    "protocol": {"const": "rptk"},
+    "protocol_major": {"const": 1},
+    "type": {"enum": ["request", "response", "event"]},
+    "request_id": {"type": "string", "minLength": 1},
+    "method": {"type": "string", "minLength": 1},
+    "payload": {"type": "object"},
+    "ok": {"type": "boolean"},
+    "result": {"type": "object"},
+    "error": {"$ref": "error.schema.json"},
+    "event": {"type": "string", "minLength": 1},
+    "event_seq": {"type": "integer", "minimum": 1}
+  },
+  "allOf": [
+    {"if": {"properties": {"type": {"const": "request"}}}, "then": {"required": ["request_id", "method", "payload"]}},
+    {"if": {"properties": {"type": {"const": "response"}}}, "then": {"required": ["request_id", "ok"]}},
+    {"if": {"properties": {"type": {"const": "event"}}}, "then": {"required": ["event", "event_seq", "payload"]}}
+  ]
+}

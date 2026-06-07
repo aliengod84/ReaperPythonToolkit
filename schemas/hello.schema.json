@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["protocol", "type", "request_id", "protocol_range", "client", "required_capabilities", "optional_capabilities"],
+  "properties": {
+    "protocol": {"const": "rptk"},
+    "type": {"const": "hello"},
+    "request_id": {"type": "string", "minLength": 1},
+    "protocol_range": {
+      "type": "object",
+      "required": ["major", "min_minor", "max_minor"],
+      "properties": {
+        "major": {"const": 1},
+        "min_minor": {"type": "integer", "minimum": 0},
+        "max_minor": {"type": "integer", "minimum": 0}
+      }
+    },
+    "client": {
+      "type": "object",
+      "required": ["app_id", "app_version", "instance_id", "sdk_version", "display_name"],
+      "properties": {
+        "app_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)+$"},
+        "app_version": {"type": "string", "minLength": 1},
+        "instance_id": {"type": "string", "minLength": 1},
+        "sdk_version": {"type": "string", "minLength": 1},
+        "display_name": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "required_capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "optional_capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+  }
+}

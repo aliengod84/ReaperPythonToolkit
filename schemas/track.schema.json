@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "guid": {"type": "string"},
+    "name": {"type": "string"},
+    "role": {"type": "string"},
+    "create": {"enum": ["never", "if_missing", "always_new"]},
+    "selection_fallback": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

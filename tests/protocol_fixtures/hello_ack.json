@@ -1,0 +1,38 @@
+{
+  "protocol": "rptk",
+  "type": "hello_ack",
+  "request_id": "hello-1",
+  "ok": true,
+  "negotiated_protocol": {"major": 1, "minor": 0},
+  "host": {
+    "host_version": "0.1.0",
+    "reaper_version": "7.0",
+    "platform": "Win64",
+    "capabilities": ["project.state"]
+  },
+  "session": {
+    "session_id": "session-1",
+    "lease_timeout_ms": 5000,
+    "heartbeat_interval_ms": 1000,
+    "udp_token": "00112233445566778899aabbccddeeff",
+    "udp_host": "127.0.0.1",
+    "udp_port": 9900
+  },
+  "initial_state": {
+    "state_seq": 1,
+    "project_generation": "project-1",
+    "project": {
+      "guid": "project-guid",
+      "ppq": 960,
+      "bpm": 120.0,
+      "meter": {"numerator": 4, "denominator": 4},
+      "playing": false,
+      "recording": false,
+      "repeat_enabled": false,
+      "edit_cursor": {"seconds": 0.0, "ppq": 0},
+      "play_cursor": {"seconds": 0.0, "ppq": 0}
+    },
+    "sessions": [],
+    "resources": []
+  }
+}

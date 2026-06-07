@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["protocol", "type", "request_id", "ok"],
+  "properties": {
+    "protocol": {"const": "rptk"},
+    "type": {"const": "hello_ack"},
+    "request_id": {"type": "string"},
+    "ok": {"type": "boolean"},
+    "negotiated_protocol": {
+      "type": "object",
+      "required": ["major", "minor"],
+      "properties": {"major": {"const": 1}, "minor": {"const": 0}}
+    },
+    "host": {
+      "type": "object",
+      "required": ["host_version", "reaper_version", "platform", "capabilities"],
+      "properties": {
+        "host_version": {"type": "string"},
+        "reaper_version": {"type": "string"},
+        "platform": {"type": "string"},
+        "capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "session": {
+      "type": "object",
+      "required": ["session_id", "lease_timeout_ms", "heartbeat_interval_ms", "udp_token", "udp_host", "udp_port"],
+      "properties": {
+        "session_id": {"type": "string"},
+        "lease_timeout_ms": {"type": "integer", "minimum": 1},
+        "heartbeat_interval_ms": {"type": "integer", "minimum": 1},
+        "udp_token": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "udp_host": {"const": "127.0.0.1"},
+        "udp_port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    },
+    "initial_state": {"$ref": "state.schema.json"},
+    "error": {"$ref": "error.schema.json"}
+  }
+}

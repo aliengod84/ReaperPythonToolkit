@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["code", "message", "retryable", "details"],
+  "properties": {
+    "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "message": {"type": "string"},
+    "retryable": {"type": "boolean"},
+    "details": {"type": "object"}
+  },
+  "additionalProperties": false
+}

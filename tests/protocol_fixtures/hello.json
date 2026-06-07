@@ -1,0 +1,15 @@
+{
+  "protocol": "rptk",
+  "type": "hello",
+  "request_id": "hello-1",
+  "protocol_range": {"major": 1, "min_minor": 0, "max_minor": 0},
+  "client": {
+    "app_id": "com.example.test",
+    "app_version": "1.0.0",
+    "instance_id": "instance-1",
+    "sdk_version": "0.1.0",
+    "display_name": "Test Client"
+  },
+  "required_capabilities": ["project.state"],
+  "optional_capabilities": []
+}

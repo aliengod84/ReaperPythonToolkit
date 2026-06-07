@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["source_ppqn", "length_ppq", "revision", "notes"],
+  "properties": {
+    "source_ppqn": {"type": "integer", "minimum": 1},
+    "length_ppq": {"type": "integer", "minimum": 1},
+    "revision": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["start_ppq", "duration_ppq", "channel", "pitch", "velocity"],
+        "properties": {
+          "start_ppq": {"type": "integer", "minimum": 0},
+          "duration_ppq": {"type": "integer", "minimum": 1},
+          "channel": {"type": "integer", "minimum": 0, "maximum": 15},
+          "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
+          "velocity": {"type": "integer", "minimum": 0, "maximum": 127}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["state_seq", "project_generation", "project", "sessions", "resources"],
+  "properties": {
+    "state_seq": {"type": "integer", "minimum": 1},
+    "project_generation": {"type": "string"},
+    "project": {
+      "type": "object",
+      "required": ["guid", "ppq", "bpm", "meter", "playing", "recording", "repeat_enabled", "edit_cursor", "play_cursor"],
+      "properties": {
+        "guid": {"type": "string"},
+        "ppq": {"type": "integer", "minimum": 1},
+        "bpm": {"type": "number", "exclusiveMinimum": 0},
+        "meter": {
+          "type": "object",
+          "required": ["numerator", "denominator"],
+          "properties": {
+            "numerator": {"type": "integer", "minimum": 1},
+            "denominator": {"type": "integer", "minimum": 1}
+          }
+        },
+        "playing": {"type": "boolean"},
+        "recording": {"type": "boolean"},
+        "repeat_enabled": {"type": "boolean"},
+        "edit_cursor": {"$ref": "#/$defs/cursor"},
+        "play_cursor": {"$ref": "#/$defs/cursor"}
+      }
+    },
+    "sessions": {"type": "array", "items": {"type": "object"}},
+    "resources": {"type": "array", "items": {"type": "object"}}
+  },
+  "$defs": {
+    "cursor": {
+      "type": "object",
+      "required": ["seconds", "ppq"],
+      "properties": {"seconds": {"type": "number"}, "ppq": {"type": "integer"}}
+    }
+  }
+}

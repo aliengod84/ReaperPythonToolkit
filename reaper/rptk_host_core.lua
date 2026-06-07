@@ -1,0 +1,291 @@
+return function(root)
+  package.path = root .. "?.lua;" .. package.path
+  local json = dofile(root .. "json.lua")
+  local protocol = dofile(root .. "rptk_protocol.lua")(json)
+  local sessions = dofile(root .. "rptk_sessions.lua")(protocol)
+  local state = dofile(root .. "rptk_state.lua")(sessions)
+  local tracks = dofile(root .. "rptk_tracks.lua")()
+  local items = dofile(root .. "rptk_midi_items.lua")(json, state, tracks)
+  local preview = dofile(root .. "rptk_preview.lua")(state, items)
+  local udp = dofile(root .. "rptk_udp.lua")(sessions)
+  local ok_socket, socket = pcall(require, "socket")
+
+  local host = {
+    version = "0.1.0", socket = ok_socket and socket or nil,
+    server = nil, clients = {}, last_state_at = 0, last_heartbeat_at = 0,
+  }
+
+  local function console(message) reaper.ShowConsoleMsg("[RPTK] " .. message .. "\n") end
+  local function send(client, value)
+    client.outgoing = client.outgoing .. protocol.encode(value)
+    if #client.outgoing > protocol.MAX_MESSAGE * 2 then client.close = true end
+  end
+
+  local function flush(client)
+    if client.outgoing == "" then return end
+    local chunk = client.outgoing:sub(1, 65536)
+    local sent, err, partial = client.socket:send(chunk)
+    local count = sent or partial or 0
+    if count > 0 then client.outgoing = client.outgoing:sub(count + 1) end
+    if err and err ~= "timeout" then client.close = true end
+  end
+
+  local function close_client(client)
+    if client.session then
+      preview.cleanup_session(client.session)
+      items.cleanup_session(client.session)
+      udp.cleanup_session(client.session)
+      sessions.remove(client.session)
+    end
+    pcall(function() client.socket:close() end)
+    host.clients[client] = nil
+  end
+
+  local function capabilities_set()
+    local result = {}
+    for _, capability in ipairs(protocol.CAPABILITIES) do result[capability] = true end
+    return result
+  end
+
+  local function handshake_failure(client, request, code, message)
+    send(client, {
+      protocol = "rptk", type = "hello_ack", request_id = request.request_id,
+      ok = false, error = protocol.error(code, message, false),
+    })
+    client.close_after_write = true
+  end
+
+  local function handle_hello(client, request, now)
+    if request.protocol ~= "rptk" or request.type ~= "hello" then
+      handshake_failure(client, request, "not_rptk_host", "First message must be an RPTK hello.")
+      return
+    end
+    local range = request.protocol_range or {}
+    if range.major ~= 1 then
+      handshake_failure(client, request, "protocol_major_mismatch", "Host supports protocol major 1.")
+      return
+    end
+    if (range.min_minor or 0) > 0 or (range.max_minor or -1) < 0 then
+      handshake_failure(client, request, "protocol_minor_unsupported", "Host supports protocol 1.0.")
+      return
+    end
+    local identity = request.client or {}
+    if type(identity.app_id) ~= "string" or not identity.app_id:find("%.") or
+      type(identity.instance_id) ~= "string" or identity.instance_id == "" or
+      type(identity.display_name) ~= "string" or identity.display_name == "" then
+      handshake_failure(client, request, "invalid_client_identity", "Client identity is invalid.")
+      return
+    end
+    local available = capabilities_set()
+    for _, capability in ipairs(request.required_capabilities or {}) do
+      if not available[capability] then
+        handshake_failure(
+          client, request, "missing_capability", "Host does not support " .. capability .. "."
+        )
+        return
+      end
+    end
+    local session, err = sessions.create(identity, client.socket, now)
+    if not session then
+      handshake_failure(client, request, err, "The instance ID is already connected.")
+      return
+    end
+    client.session, client.handshake = session, true
+    send(client, {
+      protocol = "rptk", type = "hello_ack", request_id = request.request_id, ok = true,
+      negotiated_protocol = { major = 1, minor = 0 },
+      host = {
+        host_version = host.version, reaper_version = reaper.GetAppVersion(),
+        platform = reaper.GetOS(), capabilities = protocol.CAPABILITIES,
+      },
+      session = {
+        session_id = session.id, lease_timeout_ms = 5000,
+        heartbeat_interval_ms = 1000, udp_token = session.udp_token,
+        udp_host = "127.0.0.1", udp_port = 9900,
+      },
+      initial_state = state.build(items.public_state()),
+    })
+  end
+
+  local function parse_error(err)
+    local text = tostring(err)
+    local code, message = text:match("([a-z_]+):(.*)")
+    if not code then return protocol.error("reaper_operation_failed", text, false) end
+    return protocol.error(code, message, code == "resource_busy")
+  end
+
+  local function command(session, request)
+    local method, payload = request.method, request.payload or {}
+    if method == "session.heartbeat" then
+      sessions.touch(session, reaper.time_precise())
+      return { lease_deadline = session.lease_deadline }
+    elseif method == "state.get" then
+      return state.build(items.public_state())
+    elseif method == "transport.set" then
+      local playing = reaper.GetPlayState() & 1 == 1
+      if payload.playing and not playing then reaper.OnPlayButton() end
+      if not payload.playing and playing then reaper.OnStopButton() end
+      return { playing = payload.playing == true }
+    elseif method == "cursor.set" then
+      if type(payload.ppq) ~= "number" then error("invalid_params:ppq is required") end
+      reaper.SetEditCurPos(state.ppq_to_time(math.floor(payload.ppq)), true, false)
+      return { ppq = math.floor(payload.ppq) }
+    elseif method == "track.capture_selection" then
+      local _, result = tracks.capture(payload.role)
+      return result
+    elseif method == "track.resolve" then
+      local _, result = tracks.resolve(payload.track_ref)
+      return result
+    elseif method == "midi.item.insert" then
+      payload.operation_id = payload.operation_id or request.operation_id
+      local resource = items.insert(session, payload, "midi_item")
+      return { resource_id = resource.resource_id }
+    elseif method == "midi.item.replace" then
+      payload.operation_id = payload.operation_id or request.operation_id
+      local resource = items.replace(session, payload)
+      return { resource_id = resource.resource_id }
+    elseif method == "midi.preview.prepare" then
+      return preview.prepare(session, payload)
+    elseif method == "midi.preview.update" then
+      return preview.update(session, payload)
+    elseif method == "midi.preview.stop" then
+      return preview.stop(session, payload.resource_id)
+    end
+    error("invalid_request:unknown method " .. tostring(method))
+  end
+
+  local function handle_request(client, request)
+    if request.protocol ~= "rptk" or request.protocol_major ~= 1 or
+      request.type ~= "request" or type(request.request_id) ~= "string" or
+      type(request.method) ~= "string" or type(request.payload) ~= "table" then
+      client.close = true
+      return
+    end
+    local fingerprint = json.encode(request)
+    local cached = client.session.response_cache[request.request_id]
+    if cached then
+      if cached.fingerprint == fingerprint then send(client, cached.response)
+      else
+        send(client, protocol.response(
+          request, false, protocol.error(
+            "request_id_conflict", "Request ID was reused with different content.", false
+          )
+        ))
+      end
+      return
+    end
+    local ok, result = pcall(command, client.session, request)
+    local response = protocol.response(request, ok, ok and result or parse_error(result))
+    client.session.response_cache[request.request_id] = {
+      fingerprint = fingerprint, response = response, at = reaper.time_precise(),
+    }
+    send(client, response)
+  end
+
+  local function read_client(client, now)
+    for _ = 1, 16 do
+      local data, err, partial = client.socket:receive(65536)
+      local received = data or partial
+      if received and #received > 0 then
+        client.buffer = client.buffer .. received
+        if #client.buffer > protocol.MAX_MESSAGE then client.close = true; return end
+      end
+      if err and err ~= "timeout" then client.close = true; return end
+      if not data then break end
+    end
+    for _ = 1, 32 do
+      local newline = client.buffer:find("\n", 1, true)
+      if not newline then break end
+      local line = client.buffer:sub(1, newline - 1)
+      client.buffer = client.buffer:sub(newline + 1)
+      if line ~= "" then
+        local value, err = protocol.decode(line)
+        if not value then
+          console("client protocol error: " .. err)
+          client.close = true
+          return
+        end
+        if not client.handshake then handle_hello(client, value, now)
+        else handle_request(client, value) end
+      end
+    end
+  end
+
+  function host.bootstrap(tcp_port, udp_port)
+    if not host.socket then
+      return nil, "LuaSocket is missing. Install LuaSocket for Reaper Lua, then restart the action."
+    end
+    math.randomseed(math.floor(reaper.time_precise() * 1000000))
+    preview.restore_stale()
+    local server, err = host.socket.bind("127.0.0.1", tcp_port or 9901)
+    if not server then return nil, "TCP bind failed: " .. tostring(err) end
+    server:settimeout(0)
+    host.server = server
+    local ok, udp_err = udp.bind(host.socket, "127.0.0.1", udp_port or 9900)
+    if not ok then server:close(); host.server = nil; return nil, "UDP bind failed: " .. tostring(udp_err) end
+    console("host " .. host.version .. " listening on TCP 9901 and UDP 9900")
+    return true
+  end
+
+  function host.tick(now)
+    for _ = 1, 8 do
+      local connection = host.server:accept()
+      if not connection then break end
+      connection:settimeout(0)
+      host.clients[{
+        socket = connection, buffer = "", outgoing = "", handshake = false,
+        accepted_at = now, close = false,
+      }] = true
+    end
+    udp.poll(now)
+    preview.tick()
+    for client in pairs(host.clients) do
+      if not client.handshake and now - client.accepted_at > 2 then client.close = true end
+      read_client(client, now)
+      flush(client)
+      if client.close or (client.close_after_write and client.outgoing == "") then close_client(client) end
+    end
+    for _, session in ipairs(sessions.expired(now)) do
+      for client in pairs(host.clients) do
+        if client.session == session then close_client(client) end
+      end
+    end
+    if now - host.last_state_at >= 0.1 then
+      host.last_state_at = now
+      local snapshot = state.build(items.public_state())
+      local snapshot_sequence = snapshot.state_seq
+      snapshot.state_seq = 0
+      local encoded = json.encode(snapshot)
+      snapshot.state_seq = snapshot_sequence
+      if state.changed(encoded) then
+        snapshot.state_seq = state.sequence_value()
+        for client in pairs(host.clients) do
+          if client.session then
+            client.session.event_seq = client.session.event_seq + 1
+            send(client, protocol.event("state.changed", client.session.event_seq, snapshot))
+          end
+        end
+      end
+      if now - host.last_heartbeat_at >= 1 then
+        host.last_heartbeat_at = now
+        for client in pairs(host.clients) do
+          if client.session then
+            client.session.event_seq = client.session.event_seq + 1
+            send(client, protocol.event("bridge.heartbeat", client.session.event_seq, {
+              state_seq = snapshot.state_seq,
+              host_monotonic_time = now,
+              project_generation = snapshot.project_generation,
+            }))
+          end
+        end
+      end
+    end
+  end
+
+  function host.close()
+    for client in pairs(host.clients) do close_client(client) end
+    udp.close()
+    if host.server then host.server:close(); host.server = nil end
+  end
+  return host
+end
