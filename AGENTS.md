@@ -1,16 +1,18 @@
-# Reaper Python Toolkit Context
+# Agent Context
 
 Reaper Python Toolkit (`rptk`) is a framework-independent Python 3.11+ client
 and Reaper Lua host for controlling Reaper over localhost.
 
-Read these before changing behavior:
+Key locations:
 
-- `README.md` for supported workflows and maturity.
-- `docs/architecture.md` for component boundaries.
-- `docs/protocol.md` for the normative TCP and UDP contracts.
-- `docs/compatibility.md` for version compatibility.
+- `README.md`: supported workflows, setup, and maturity.
+- `docs/architecture.md`: component boundaries.
+- `docs/protocol.md`: TCP and UDP protocol contracts.
+- `docs/compatibility.md`: supported version combinations.
+- `src/reaper_toolkit/`: Python package.
+- `reaper/`: Reaper action and Lua host modules.
+- `schemas/`: normative JSON schemas.
+- `tests/`: unit, protocol, and loopback integration tests.
 
-The Python package is under `src/reaper_toolkit/`. The Reaper action and host
-modules are under `reaper/`. JSON schemas are normative and live in `schemas/`.
-Run `python -m pytest` and `python -m ruff check .` before committing.
-
+Local verification uses `python -m pytest`, `python -m ruff check .`, and a Lua
+syntax check over `reaper/*.lua`.
