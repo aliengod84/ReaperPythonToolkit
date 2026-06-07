@@ -10,7 +10,7 @@
     "negotiated_protocol": {
       "type": "object",
       "required": ["major", "minor"],
-      "properties": {"major": {"const": 1}, "minor": {"const": 0}}
+      "properties": {"major": {"const": 1}, "minor": {"const": 1}}
     },
     "host": {
       "type": "object",

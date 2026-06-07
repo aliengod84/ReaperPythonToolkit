@@ -17,8 +17,16 @@ return function(sessions)
     return true
   end
 
-  local function all_notes_off()
-    for channel = 0, 15 do reaper.StuffMIDIMessage(0, 0xB0 | channel, 123, 0) end
+  local function note_key(status, pitch)
+    return tostring(status & 0x0F) .. ":" .. tostring(pitch)
+  end
+
+  local function session_notes_off(session)
+    for key in pairs(session.active_notes) do
+      local channel, pitch = key:match("^(%d+):(%d+)$")
+      reaper.StuffMIDIMessage(0, 0x80 | tonumber(channel), tonumber(pitch), 0)
+    end
+    session.active_notes = {}
   end
 
   function udp.poll(now)
@@ -34,7 +42,7 @@ return function(sessions)
           local generation, sequence, position = string.unpack(">I4I4", packet, 23)
           if packet_type == 2 and generation >= session.generation then
             session.generation, session.udp_queue = generation, {}
-            all_notes_off()
+            session_notes_off(session)
           elseif packet_type == 1 and generation >= session.generation and #packet == 41 then
             local delay, status, data1, data2 = string.unpack(">dI1I1I1", packet, position)
             session.generation = generation
@@ -55,13 +63,20 @@ return function(sessions)
       while session.udp_queue[1] and session.udp_queue[1].at <= now do
         local event = table.remove(session.udp_queue, 1)
         reaper.StuffMIDIMessage(0, event.status, event.data1, event.data2)
+        local kind = event.status & 0xF0
+        local key = note_key(event.status, event.data1)
+        if kind == 0x90 and event.data2 > 0 then
+          session.active_notes[key] = true
+        elseif kind == 0x80 or (kind == 0x90 and event.data2 == 0) then
+          session.active_notes[key] = nil
+        end
       end
     end
   end
 
   function udp.cleanup_session(session)
     session.udp_queue = {}
-    all_notes_off()
+    session_notes_off(session)
   end
 
   function udp.close()

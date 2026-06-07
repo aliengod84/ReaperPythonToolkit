@@ -28,7 +28,30 @@
       }
     },
     "sessions": {"type": "array", "items": {"type": "object"}},
-    "resources": {"type": "array", "items": {"type": "object"}}
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["resource_id", "kind", "app_id", "target_guid", "track_guid", "start_ppq", "length_ppq", "metadata"],
+        "properties": {
+          "resource_id": {"type": "string"},
+          "kind": {"type": "string"},
+          "app_id": {"type": "string"},
+          "session_id": {"type": ["string", "null"]},
+          "target_guid": {"type": "string"},
+          "track_guid": {"type": "string"},
+          "start_ppq": {"type": "integer"},
+          "length_ppq": {"type": "integer", "minimum": 0},
+          "metadata": {"type": "object"}
+        }
+      }
+    },
+    "preview": {
+      "oneOf": [
+        {"$ref": "preview.schema.json"},
+        {"type": "null"}
+      ]
+    }
   },
   "$defs": {
     "cursor": {

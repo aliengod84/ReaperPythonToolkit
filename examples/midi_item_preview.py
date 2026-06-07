@@ -13,7 +13,7 @@ phrase = MidiPhrase.create(96, 384, [
     MidiNote(96, 24, 9, 38, 105),
 ])
 client = ReaperClient(
-    ClientIdentity("com.example.rptk-preview", "0.1.0", "RPTK Preview"),
+    ClientIdentity("com.example.rptk-preview", "0.2.0", "RPTK Preview"),
     {"midi.preview", "track.resolve"},
 )
 try:

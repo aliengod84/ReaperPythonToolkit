@@ -9,11 +9,15 @@ return function(state, items)
 
   local function save_settings(options)
     options = options or {}
+    local repeat_enabled = reaper.GetSetRepeat(-1)
+    if repeat_enabled == 1 and not options.repeat_guard then
+      error("resource_busy:Reaper Repeat is enabled")
+    end
     if options.repeat_guard then
-      preview.prior_repeat = reaper.GetSetRepeat(-1)
+      preview.prior_repeat = repeat_enabled
       reaper.SetProjExtState(0, "RPTK", preview.repeat_active_key, "1")
-      reaper.SetProjExtState(0, "RPTK", preview.repeat_prior_key, tostring(preview.prior_repeat))
-      reaper.GetSetRepeat(0)
+      reaper.SetProjExtState(0, "RPTK", preview.repeat_prior_key, tostring(repeat_enabled))
+      if repeat_enabled == 1 then reaper.GetSetRepeat(0) end
     end
     if options.metronome_guard and reaper.SNM_GetIntConfigVar then
       preview.prior_metronome = reaper.SNM_GetIntConfigVar("projmetroen", 0)
@@ -21,20 +25,30 @@ return function(state, items)
       reaper.SetProjExtState(
         0, "RPTK", preview.metro_prior_key, tostring(preview.prior_metronome)
       )
+    end
+  end
+
+  local function enable_metronome()
+    if preview.prior_metronome ~= nil and reaper.SNM_SetIntConfigVar then
       reaper.SNM_SetIntConfigVar("projmetroen", preview.prior_metronome | 3)
     end
   end
 
-  local function restore_settings()
-    if preview.prior_repeat ~= nil then reaper.GetSetRepeat(preview.prior_repeat) end
+  local function restore_metronome()
     if preview.prior_metronome ~= nil and reaper.SNM_SetIntConfigVar then
       reaper.SNM_SetIntConfigVar("projmetroen", preview.prior_metronome)
+      preview.prior_metronome = nil
+      reaper.SetProjExtState(0, "RPTK", preview.metro_active_key, "")
+      reaper.SetProjExtState(0, "RPTK", preview.metro_prior_key, "")
     end
-    preview.prior_repeat, preview.prior_metronome = nil, nil
+  end
+
+  local function restore_settings()
+    restore_metronome()
+    if preview.prior_repeat ~= nil then reaper.GetSetRepeat(preview.prior_repeat) end
+    preview.prior_repeat = nil
     reaper.SetProjExtState(0, "RPTK", preview.repeat_active_key, "")
     reaper.SetProjExtState(0, "RPTK", preview.repeat_prior_key, "")
-    reaper.SetProjExtState(0, "RPTK", preview.metro_active_key, "")
-    reaper.SetProjExtState(0, "RPTK", preview.metro_prior_key, "")
   end
 
   function preview.restore_stale()
@@ -46,42 +60,111 @@ return function(state, items)
     if metro_active == "1" and reaper.SNM_SetIntConfigVar then
       reaper.SNM_SetIntConfigVar("projmetroen", tonumber(metro_prior) or 0)
     end
-    restore_settings()
+    preview.prior_repeat, preview.prior_metronome = nil, nil
+    reaper.SetProjExtState(0, "RPTK", preview.repeat_active_key, "")
+    reaper.SetProjExtState(0, "RPTK", preview.repeat_prior_key, "")
+    reaper.SetProjExtState(0, "RPTK", preview.metro_active_key, "")
+    reaper.SetProjExtState(0, "RPTK", preview.metro_prior_key, "")
   end
 
-  local function measure_plan(seconds)
+  local function measure_plan(seconds, count_in)
     local _, measure = reaper.TimeMap2_timeToBeats(0, seconds)
     local current = reaper.TimeMap2_beatsToTime(0, 0, measure)
     if seconds > current + 0.001 then measure = measure + 1 end
     local count_start = reaper.TimeMap2_beatsToTime(0, 0, measure)
-    local origin = reaper.TimeMap2_beatsToTime(0, 0, measure + 1)
+    local origin_measure = count_in == false and measure or measure + 1
+    local origin = reaper.TimeMap2_beatsToTime(0, 0, origin_measure)
     return state.time_to_ppq(count_start), state.time_to_ppq(origin)
+  end
+
+  local function horizon_end(current, authority)
+    local elapsed = math.max(0, authority - current.origin)
+    local cycles = math.floor(elapsed / current.phrase_length) + 64
+    return current.origin + math.max(64, cycles) * current.phrase_length
+  end
+
+  local function set_item_end(resource, ending_ppq)
+    local start = reaper.GetMediaItemInfo_Value(resource.item, "D_POSITION")
+    reaper.SetMediaItemInfo_Value(
+      resource.item, "D_LENGTH", math.max(0, state.ppq_to_time(ending_ppq) - start)
+    )
+  end
+
+  local function configure_loop(resource)
+    reaper.SetMediaItemInfo_Value(resource.item, "B_LOOPSRC", 1)
+    reaper.SetMediaItemInfo_Value(resource.item, "C_BEATATTACHMODE", 1)
+  end
+
+  local function public(current)
+    return {
+      resource_id = current and current.id or "",
+      active = current ~= nil,
+      status = current and current.status or "idle",
+      origin_ppq = current and current.origin or 0,
+      phrase_length_ppq = current and current.phrase_length or 0,
+      count_in = current and current.count_in or false,
+      count_in_start_ppq = current and current.count_start or 0,
+      pending_switch_ppq = current and current.pending_switch or nil,
+      active_revision = current and current.active_revision or "",
+      pending_revision = current and current.pending_revision or nil,
+    }
+  end
+
+  local function create(session, payload, start, phase)
+    local copy = {}
+    for key, value in pairs(payload) do copy[key] = value end
+    copy.options = { start_ppq = start, collision_policy = "allow", advance_cursor = "none" }
+    copy.phase_ppq = phase or 0
+    local resource = items.insert(session, copy, "midi_preview")
+    configure_loop(resource)
+    return resource
   end
 
   function preview.prepare(session, payload)
     if preview.owner and preview.owner ~= session.id then
       error("resource_busy:transport preview is owned by another session")
     end
-    local authority = (reaper.GetPlayState() & 1 == 1) and
-      reaper.GetPlayPosition() or reaper.GetCursorPosition()
-    local count_start, origin = measure_plan(authority)
-    payload.start_ppq = origin
-    local resource = items.insert(session, payload, "midi_preview")
-    preview.owner = session.id
-    preview.active[resource.resource_id] = {
-      resource = resource, active_revision = payload.midi_phrase.revision,
-      pending_revision = nil, count_start = count_start, origin = origin,
-      last_play = nil,
+    local options = payload.options or {}
+    save_settings(options)
+    local ok, value = xpcall(function()
+      local playing = reaper.GetPlayState() & 1 == 1
+      local authority = playing and reaper.GetPlayPosition() or reaper.GetCursorPosition()
+      local count_start, origin = measure_plan(authority, options.count_in)
+      local resource = create(session, payload, origin, 0)
+      return {
+        playing = playing, count_start = count_start, origin = origin, resource = resource,
+      }
+    end, debug.traceback)
+    if not ok then restore_settings(); error(value) end
+    local playing, count_start, origin, resource =
+      value.playing, value.count_start, value.origin, value.resource
+    local current = {
+      id = resource.resource_id, resource = resource,
+      active_revision = payload.midi_phrase.revision, pending_revision = nil,
+      count_start = count_start, origin = origin,
+      phrase_length = resource.length_ppq, count_in = options.count_in ~= false,
+      status = options.count_in == false and "playing" or (playing and "queued" or "count_in"),
+      last_play = nil, last_wall = nil, prepared_at = reaper.time_precise(),
     }
-    save_settings(payload.options)
-    if reaper.GetPlayState() & 1 == 0 then
+    set_item_end(resource, horizon_end(current, origin))
+    preview.owner = session.id
+    preview.active[current.id] = current
+    if not playing then
       reaper.SetEditCurPos(state.ppq_to_time(count_start), true, false)
+      if current.count_in then enable_metronome() end
       reaper.OnPlayButton()
     end
-    return {
-      resource_id = resource.resource_id, active = true,
-      active_revision = payload.midi_phrase.revision,
-    }
+    return public(current)
+  end
+
+  local function promote(current)
+    if not current.pending then return end
+    items.delete(current.resource)
+    current.resource = items.adopt_id(current.pending, current.id)
+    current.pending = nil
+    current.active_revision = current.pending_revision
+    current.pending_revision, current.pending_switch = nil, nil
+    current.status = "playing"
   end
 
   function preview.update(session, payload)
@@ -91,41 +174,55 @@ return function(state, items)
       error("ownership_error:preview belongs to another session")
     end
     local play = state.time_to_ppq(reaper.GetPlayPosition())
-    local _, measure = reaper.TimeMap2_timeToBeats(0, reaper.GetPlayPosition() + 0.250)
-    local switch = state.time_to_ppq(reaper.TimeMap2_beatsToTime(0, 0, measure + 1))
-    if play < current.origin then switch = current.origin end
-    payload.start_ppq = switch
-    payload.track_ref = { guid = reaper.GetTrackGUID(current.resource.track), create = "never" }
-    local pending = items.insert(session, payload, "midi_preview")
-    reaper.SetMediaItemInfo_Value(
-      current.resource.item, "D_LENGTH",
-      math.max(0, state.ppq_to_time(switch) -
-        reaper.GetMediaItemInfo_Value(current.resource.item, "D_POSITION"))
+    if current.pending and play >= current.pending_switch then promote(current) end
+    if play < current.origin then
+      if current.pending then items.delete(current.pending) end
+      items.delete(current.resource)
+      local replacement = create(session, payload, current.origin, 0)
+      current.resource = items.adopt_id(replacement, current.id)
+      current.phrase_length = replacement.length_ppq
+      current.active_revision = payload.midi_phrase.revision
+      current.pending, current.pending_revision, current.pending_switch = nil, nil, nil
+      set_item_end(current.resource, horizon_end(current, current.origin))
+      return public(current)
+    end
+    local safe_seconds = reaper.GetPlayPosition() + 0.250
+    local _, measure = reaper.TimeMap2_timeToBeats(0, safe_seconds)
+    local boundary = reaper.TimeMap2_beatsToTime(0, 0, measure)
+    if boundary < safe_seconds - 0.001 then
+      boundary = reaper.TimeMap2_beatsToTime(0, 0, measure + 1)
+    end
+    local switch = state.time_to_ppq(boundary)
+    if current.pending then items.delete(current.pending) end
+    local phrase_length = math.max(
+      1, math.floor(payload.midi_phrase.length_ppq * state.ppq() /
+        payload.midi_phrase.source_ppqn + 0.5)
     )
-    current.pending = pending
+    current.pending = create(
+      session, payload, switch, (switch - current.origin) % phrase_length
+    )
+    set_item_end(current.resource, switch)
     current.pending_switch = switch
-    current.pending_revision = payload.revision or payload.midi_phrase.revision
-    return {
-      resource_id = payload.resource_id, active = true,
-      active_revision = current.active_revision,
-      pending_revision = current.pending_revision,
-    }
+    current.pending_revision = payload.midi_phrase.revision
+    current.phrase_length = phrase_length
+    current.status = "switch_pending"
+    return public(current)
   end
 
   function preview.stop(session, id)
     local current = preview.active[id]
-    if not current then
-      return { resource_id = id, active = false, active_revision = "" }
-    end
+    if not current then return public(nil) end
     if current.resource.session_id ~= session.id then
       error("ownership_error:preview belongs to another session")
     end
     items.delete(current.resource)
     if current.pending then items.delete(current.pending) end
-    preview.active[id] = nil
-    preview.owner = nil
+    preview.active[id], preview.owner = nil, nil
     restore_settings()
-    return { resource_id = id, active = false, active_revision = current.active_revision }
+    local result = public(nil)
+    result.resource_id = id
+    result.active_revision = current.active_revision
+    return result
   end
 
   function preview.cleanup_session(session)
@@ -136,37 +233,67 @@ return function(state, items)
     for _, id in ipairs(remove) do preview.stop(session, id) end
   end
 
-  function preview.tick()
+  function preview.cleanup_all()
+    for _, current in pairs(preview.active) do
+      items.delete(current.resource)
+      if current.pending then items.delete(current.pending) end
+    end
+    preview.active, preview.owner = {}, nil
+    restore_settings()
+  end
+
+  function preview.tick(now)
     local changed = false
     local playing = reaper.GetPlayState() & 1 == 1
-    for _, current in pairs(preview.active) do
+    local remove = {}
+    for id, current in pairs(preview.active) do
       if not playing then
-        items.delete(current.resource)
-        if current.pending then items.delete(current.pending) end
-        changed = true
+        if now - current.prepared_at > 0.5 then remove[#remove + 1] = id end
       else
-        local play = state.time_to_ppq(reaper.GetPlayPosition())
-        if current.pending and play >= current.pending_switch then
-          items.delete(current.resource)
-          current.resource = current.pending
-          current.active_revision = current.pending_revision
-          current.pending, current.pending_revision, current.pending_switch = nil, nil, nil
-          changed = true
+        local play_seconds = reaper.GetPlayPosition()
+        local play = state.time_to_ppq(play_seconds)
+        if current.last_play then
+          local elapsed = math.max(0, now - (current.last_wall or now))
+          local delta = play_seconds - current.last_play
+          if delta < -0.05 or delta > elapsed * 2.5 + 0.25 then
+            remove[#remove + 1] = id
+          end
         end
-        if current.last_play and (play < current.last_play - state.ppq() / 8) then
-          items.delete(current.resource)
-          if current.pending then items.delete(current.pending) end
-          changed = true
+        current.last_play, current.last_wall = play_seconds, now
+        if play < current.origin then
+          current.count_in = true
+          current.status = "count_in"
+          enable_metronome()
+        else
+          current.count_in = false
+          restore_metronome()
+          if current.pending and play >= current.pending_switch then promote(current) end
+          current.status = current.pending and "switch_pending" or "playing"
+          if not current.pending then set_item_end(current.resource, horizon_end(current, play)) end
         end
-        current.last_play = play
       end
     end
-    if changed and not playing then
-      preview.active, preview.owner = {}, nil
+    for _, id in ipairs(remove) do
+      local current = preview.active[id]
+      items.delete(current.resource)
+      if current.pending then items.delete(current.pending) end
+      preview.active[id] = nil
+      changed = true
+    end
+    if next(preview.active) == nil and changed then
+      preview.owner = nil
       restore_settings()
     end
     return changed
   end
 
+  function preview.public_state(session_id)
+    for _, current in pairs(preview.active) do
+      if not session_id or current.resource.session_id == session_id then return public(current) end
+    end
+    return nil
+  end
+
+  preview.measure_plan = measure_plan
   return preview
 end

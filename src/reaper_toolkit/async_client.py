@@ -15,9 +15,12 @@ from .commands import (
     MIDI_PREVIEW_PREPARE,
     MIDI_PREVIEW_STOP,
     MIDI_PREVIEW_UPDATE,
+    RESOURCE_LIST,
     STATE_GET,
+    TRACK_BINDING_CLEAR,
     TRACK_CAPTURE_SELECTION,
     TRACK_RESOLVE,
+    TRACK_RESOLVE_BOUND,
     TRANSPORT_SET,
 )
 from .errors import (
@@ -33,10 +36,13 @@ from .models import (
     BridgeStatus,
     ClientIdentity,
     ConnectionState,
+    InsertOptions,
     MidiPhrase,
     PreviewOptions,
     PreviewState,
     ProjectState,
+    ReplaceOptions,
+    ResourceState,
     Severity,
     TrackRef,
     TrackState,
@@ -107,6 +113,24 @@ class AsyncReaperClient:
             if self.last_status.ready:
                 return
             await self._connect_once(reconnecting=False)
+
+    async def start(self) -> None:
+        """Start connecting in the background and return immediately."""
+        self._closing = False
+        if self.last_status.ready or (self._connect_task and not self._connect_task.done()):
+            return
+        self._connect_task = asyncio.create_task(self._initial_connect_loop())
+
+    async def _initial_connect_loop(self) -> None:
+        try:
+            await self._connect_once(reconnecting=False)
+        except (IncompatibleHostError, MissingCapabilityError):
+            return
+        except Exception as exc:
+            if self.auto_reconnect and not self._closing:
+                await self._reconnect_loop()
+            elif not self._closing:
+                self._set_status(ConnectionState.ERROR, detail=str(exc), retryable=True)
 
     async def _connect_once(self, *, reconnecting: bool) -> None:
         next_state = ConnectionState.RECONNECTING if reconnecting else ConnectionState.CONNECTING
@@ -188,8 +212,14 @@ class AsyncReaperClient:
             names = ", ".join(sorted(missing))
             raise MissingCapabilityError(f"host is missing capabilities: {names}")
         session = ack.get("session") or {}
-        required_session = {"session_id", "lease_timeout_ms", "heartbeat_interval_ms", "udp_token",
-                            "udp_host", "udp_port"}
+        required_session = {
+            "session_id",
+            "lease_timeout_ms",
+            "heartbeat_interval_ms",
+            "udp_token",
+            "udp_host",
+            "udp_port",
+        }
         if not required_session.issubset(session):
             raise HandshakeError("hello acknowledgement has incomplete session data")
         state = ProjectState.from_dict(ack["initial_state"])
@@ -213,6 +243,12 @@ class AsyncReaperClient:
     async def close(self) -> None:
         self._closing = True
         self._set_status(ConnectionState.CLOSING, connected=self._writer is not None)
+        current = asyncio.current_task()
+        if self._connect_task and self._connect_task is not current:
+            self._connect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._connect_task
+        self._connect_task = None
         await self._drop_connection(ConnectionLostError("client closed"))
         self._set_status(ConnectionState.DISCONNECTED)
 
@@ -244,69 +280,159 @@ class AsyncReaperClient:
         finally:
             self._pending.pop(request_id, None)
 
-    async def refresh_state(self) -> ProjectState:
-        result = await self.request(STATE_GET)
+    async def refresh_state(self, *, timeout: float | None = None) -> ProjectState:
+        result = await self.request(STATE_GET, timeout=timeout)
         state = ProjectState.from_dict(result)
         self._accept_state(state)
         return state
 
-    async def set_transport(self, *, playing: bool) -> dict[str, Any]:
-        return await self.request(TRANSPORT_SET, {"playing": playing})
+    async def set_transport(self, *, playing: bool, timeout: float | None = None) -> dict[str, Any]:
+        return await self.request(TRANSPORT_SET, {"playing": playing}, timeout=timeout)
 
-    async def set_edit_cursor(self, *, ppq: int) -> dict[str, Any]:
-        return await self.request(CURSOR_SET, {"ppq": ppq})
+    async def set_edit_cursor(self, *, ppq: int, timeout: float | None = None) -> dict[str, Any]:
+        return await self.request(CURSOR_SET, {"ppq": ppq}, timeout=timeout)
 
-    async def capture_selected_track(self, *, role: str = "") -> TrackState:
-        return TrackState.from_dict(await self.request(TRACK_CAPTURE_SELECTION, {"role": role}))
+    async def capture_selected_track(
+        self, *, role: str = "", bind: bool = False, timeout: float | None = None
+    ) -> TrackState:
+        return TrackState.from_dict(
+            await self.request(
+                TRACK_CAPTURE_SELECTION, {"role": role, "bind": bind}, timeout=timeout
+            )
+        )
 
-    async def resolve_track(self, track_ref: TrackRef) -> TrackState:
-        result = await self.request(TRACK_RESOLVE, {"track_ref": track_ref.to_dict()})
+    async def resolve_track(
+        self, track_ref: TrackRef, *, timeout: float | None = None
+    ) -> TrackState:
+        result = await self.request(
+            TRACK_RESOLVE, {"track_ref": track_ref.to_dict()}, timeout=timeout
+        )
         return TrackState.from_dict(result)
 
+    async def resolve_bound_track(
+        self,
+        *,
+        role: str,
+        fallback: TrackRef,
+        bind_fallback: bool = False,
+        timeout: float | None = None,
+    ) -> TrackState:
+        result = await self.request(
+            TRACK_RESOLVE_BOUND,
+            {
+                "role": role,
+                "fallback": fallback.to_dict(),
+                "bind_fallback": bind_fallback,
+            },
+            timeout=timeout,
+        )
+        return TrackState.from_dict(result)
+
+    async def clear_track_binding(self, *, role: str, timeout: float | None = None) -> None:
+        await self.request(TRACK_BINDING_CLEAR, {"role": role}, timeout=timeout)
+
+    async def list_resources(
+        self,
+        *,
+        kind: str | None = None,
+        target_guid: str | None = None,
+        timeout: float | None = None,
+    ) -> tuple[ResourceState, ...]:
+        result = await self.request(
+            RESOURCE_LIST,
+            {"kind": kind, "target_guid": target_guid},
+            timeout=timeout,
+        )
+        return tuple(ResourceState.from_dict(value) for value in result.get("resources", ()))
+
     async def insert_midi_item(
-        self, track_ref: TrackRef, midi_phrase: MidiPhrase, metadata: dict[str, Any] | None = None,
-        *, operation_id: str | None = None,
+        self,
+        track_ref: TrackRef,
+        midi_phrase: MidiPhrase,
+        metadata: dict[str, Any] | None = None,
+        *,
+        options: InsertOptions,
+        operation_id: str | None = None,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         return await self.request(
             MIDI_ITEM_INSERT,
-            {"track_ref": track_ref.to_dict(), "midi_phrase": midi_phrase.to_dict(),
-             "metadata": metadata or {}},
+            {
+                "track_ref": track_ref.to_dict(),
+                "midi_phrase": midi_phrase.to_dict(),
+                "metadata": metadata or {},
+                "options": asdict(options),
+            },
             operation_id=operation_id,
+            timeout=timeout,
         )
 
     async def replace_midi_item(
-        self, resource_id: str, midi_phrase: MidiPhrase, metadata: dict[str, Any] | None = None,
-        *, operation_id: str | None = None,
+        self,
+        resource_id: str,
+        midi_phrase: MidiPhrase,
+        metadata: dict[str, Any] | None = None,
+        *,
+        options: ReplaceOptions | None = None,
+        operation_id: str | None = None,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         return await self.request(
             MIDI_ITEM_REPLACE,
-            {"resource_id": resource_id, "midi_phrase": midi_phrase.to_dict(),
-             "metadata": metadata or {}},
+            {
+                "resource_id": resource_id,
+                "midi_phrase": midi_phrase.to_dict(),
+                "metadata": metadata or {},
+                "options": asdict(options or ReplaceOptions()),
+            },
             operation_id=operation_id,
+            timeout=timeout,
         )
 
     async def prepare_midi_preview(
-        self, track_ref: TrackRef, midi_phrase: MidiPhrase, options: PreviewOptions | None = None,
+        self,
+        track_ref: TrackRef,
+        midi_phrase: MidiPhrase,
+        options: PreviewOptions | None = None,
+        *,
+        timeout: float | None = None,
     ) -> PreviewState:
         result = await self.request(
             MIDI_PREVIEW_PREPARE,
-            {"track_ref": track_ref.to_dict(), "midi_phrase": midi_phrase.to_dict(),
-             "options": asdict(options or PreviewOptions())},
+            {
+                "track_ref": track_ref.to_dict(),
+                "midi_phrase": midi_phrase.to_dict(),
+                "options": asdict(options or PreviewOptions()),
+            },
+            timeout=timeout,
         )
-        return PreviewState(**result)
+        return PreviewState.from_dict(result)
 
     async def update_midi_preview(
-        self, resource_id: str, midi_phrase: MidiPhrase, *, revision: str | None = None,
+        self,
+        resource_id: str,
+        midi_phrase: MidiPhrase,
+        *,
+        revision: str | None = None,
+        timeout: float | None = None,
     ) -> PreviewState:
         result = await self.request(
             MIDI_PREVIEW_UPDATE,
-            {"resource_id": resource_id, "midi_phrase": midi_phrase.to_dict(),
-             "revision": revision or midi_phrase.revision},
+            {
+                "resource_id": resource_id,
+                "midi_phrase": midi_phrase.to_dict(),
+                "revision": revision or midi_phrase.revision,
+            },
+            timeout=timeout,
         )
-        return PreviewState(**result)
+        return PreviewState.from_dict(result)
 
-    async def stop_midi_preview(self, resource_id: str) -> PreviewState:
-        return PreviewState(**await self.request(MIDI_PREVIEW_STOP, {"resource_id": resource_id}))
+    async def stop_midi_preview(
+        self, resource_id: str, *, timeout: float | None = None
+    ) -> PreviewState:
+        return PreviewState.from_dict(
+            await self.request(MIDI_PREVIEW_STOP, {"resource_id": resource_id}, timeout=timeout)
+        )
 
     def send_midi_event(
         self, status: int, data1: int, data2: int, *, delay_seconds: float = 0.0
@@ -462,17 +588,25 @@ class AsyncReaperClient:
             ConnectionState.CLOSING: "Closing Reaper connection",
         }
         severity = (
-            Severity.SUCCESS if state == ConnectionState.READY
+            Severity.SUCCESS
+            if state == ConnectionState.READY
             else Severity.WARNING
             if state in {ConnectionState.DEGRADED, ConnectionState.RECONNECTING}
-            else Severity.ERROR if state in {ConnectionState.INCOMPATIBLE, ConnectionState.ERROR}
+            else Severity.ERROR
+            if state in {ConnectionState.INCOMPATIBLE, ConnectionState.ERROR}
             else Severity.INFO
         )
         old = getattr(self, "last_status", None)
         return BridgeStatus(
-            state=state, severity=severity, summary=summaries[state], detail=detail,
-            action=action, retryable=retryable, connected=connected,
-            ready=state == ConnectionState.READY, state_current=state_current,
+            state=state,
+            severity=severity,
+            summary=summaries[state],
+            detail=detail,
+            action=action,
+            retryable=retryable,
+            connected=connected,
+            ready=state == ConnectionState.READY,
+            state_current=state_current,
             host_version=old.host_version if old else None,
             protocol_version=old.protocol_version if old else None,
             session_id=old.session_id if old else None,

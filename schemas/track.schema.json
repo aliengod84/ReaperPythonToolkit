@@ -7,6 +7,7 @@
     "role": {"type": "string"},
     "create": {"enum": ["never", "if_missing", "always_new"]},
     "selection_fallback": {"type": "boolean"}
+    ,"binding": {"enum": ["explicit", "fallback", "none"]}
   },
   "additionalProperties": false
 }

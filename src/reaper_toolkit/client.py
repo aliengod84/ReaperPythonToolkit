@@ -57,6 +57,9 @@ class ReaperClient:
     def connect(self) -> None:
         self._run(self._client.connect())
 
+    def start(self) -> None:
+        self._run(self._client.start())
+
     def close(self) -> None:
         self._run(self._client.close())
         self._loop.call_soon_threadsafe(self._loop.stop)
@@ -65,41 +68,104 @@ class ReaperClient:
     def wait_until_ready(self, timeout: float | None = None) -> None:
         self._run(self._client.wait_until_ready(timeout), timeout)
 
-    def refresh_state(self):
-        return self._run(self._client.refresh_state())
+    def refresh_state(self, *, timeout=None):
+        return self._run(self._client.refresh_state(timeout=timeout), timeout)
 
-    def set_transport(self, *, playing: bool):
-        return self._run(self._client.set_transport(playing=playing))
+    def set_transport(self, *, playing: bool, timeout=None):
+        return self._run(self._client.set_transport(playing=playing, timeout=timeout), timeout)
 
-    def set_edit_cursor(self, *, ppq: int):
-        return self._run(self._client.set_edit_cursor(ppq=ppq))
+    def set_edit_cursor(self, *, ppq: int, timeout=None):
+        return self._run(self._client.set_edit_cursor(ppq=ppq, timeout=timeout), timeout)
 
-    def capture_selected_track(self, *, role: str = ""):
-        return self._run(self._client.capture_selected_track(role=role))
+    def capture_selected_track(self, *, role: str = "", bind=False, timeout=None):
+        return self._run(
+            self._client.capture_selected_track(role=role, bind=bind, timeout=timeout),
+            timeout,
+        )
 
-    def resolve_track(self, track_ref):
-        return self._run(self._client.resolve_track(track_ref))
+    def resolve_track(self, track_ref, *, timeout=None):
+        return self._run(self._client.resolve_track(track_ref, timeout=timeout), timeout)
 
-    def insert_midi_item(self, track_ref, midi_phrase, metadata=None, *, operation_id=None):
-        return self._run(self._client.insert_midi_item(
-            track_ref, midi_phrase, metadata, operation_id=operation_id
-        ))
+    def resolve_bound_track(self, *, role, fallback, bind_fallback=False, timeout=None):
+        return self._run(
+            self._client.resolve_bound_track(
+                role=role,
+                fallback=fallback,
+                bind_fallback=bind_fallback,
+                timeout=timeout,
+            ),
+            timeout,
+        )
 
-    def replace_midi_item(self, resource_id, midi_phrase, metadata=None, *, operation_id=None):
-        return self._run(self._client.replace_midi_item(
-            resource_id, midi_phrase, metadata, operation_id=operation_id
-        ))
+    def clear_track_binding(self, *, role, timeout=None):
+        return self._run(self._client.clear_track_binding(role=role, timeout=timeout), timeout)
 
-    def prepare_midi_preview(self, track_ref, midi_phrase, options=None):
-        return self._run(self._client.prepare_midi_preview(track_ref, midi_phrase, options))
+    def list_resources(self, *, kind=None, target_guid=None, timeout=None):
+        return self._run(
+            self._client.list_resources(kind=kind, target_guid=target_guid, timeout=timeout),
+            timeout,
+        )
 
-    def update_midi_preview(self, resource_id, midi_phrase, *, revision=None):
-        return self._run(self._client.update_midi_preview(
-            resource_id, midi_phrase, revision=revision
-        ))
+    def insert_midi_item(
+        self,
+        track_ref,
+        midi_phrase,
+        metadata=None,
+        *,
+        options,
+        operation_id=None,
+        timeout=None,
+    ):
+        return self._run(
+            self._client.insert_midi_item(
+                track_ref,
+                midi_phrase,
+                metadata,
+                options=options,
+                operation_id=operation_id,
+                timeout=timeout,
+            ),
+            timeout,
+        )
 
-    def stop_midi_preview(self, resource_id):
-        return self._run(self._client.stop_midi_preview(resource_id))
+    def replace_midi_item(
+        self,
+        resource_id,
+        midi_phrase,
+        metadata=None,
+        *,
+        options=None,
+        operation_id=None,
+        timeout=None,
+    ):
+        return self._run(
+            self._client.replace_midi_item(
+                resource_id,
+                midi_phrase,
+                metadata,
+                options=options,
+                operation_id=operation_id,
+                timeout=timeout,
+            ),
+            timeout,
+        )
+
+    def prepare_midi_preview(self, track_ref, midi_phrase, options=None, *, timeout=None):
+        return self._run(
+            self._client.prepare_midi_preview(track_ref, midi_phrase, options, timeout=timeout),
+            timeout,
+        )
+
+    def update_midi_preview(self, resource_id, midi_phrase, *, revision=None, timeout=None):
+        return self._run(
+            self._client.update_midi_preview(
+                resource_id, midi_phrase, revision=revision, timeout=timeout
+            ),
+            timeout,
+        )
+
+    def stop_midi_preview(self, resource_id, *, timeout=None):
+        return self._run(self._client.stop_midi_preview(resource_id, timeout=timeout), timeout)
 
     def send_midi_event(self, status, data1, data2, *, delay_seconds=0.0):
         self._loop.call_soon_threadsafe(

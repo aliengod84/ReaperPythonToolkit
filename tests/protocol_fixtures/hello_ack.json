@@ -3,9 +3,9 @@
   "type": "hello_ack",
   "request_id": "hello-1",
   "ok": true,
-  "negotiated_protocol": {"major": 1, "minor": 0},
+  "negotiated_protocol": {"major": 1, "minor": 1},
   "host": {
-    "host_version": "0.1.0",
+    "host_version": "0.2.0",
     "reaper_version": "7.0",
     "platform": "Win64",
     "capabilities": ["project.state"]

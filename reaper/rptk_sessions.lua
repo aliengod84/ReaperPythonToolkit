@@ -14,6 +14,7 @@ return function(protocol)
       id = random_hex(16), udp_token = random_hex(16), client = client,
       socket = socket, lease_deadline = now + 5, event_seq = 0,
       resources = {}, response_cache = {}, generation = 0, udp_queue = {},
+      active_notes = {},
     }
     sessions.active[session.id] = session
     sessions.instances[instance] = session.id

@@ -25,7 +25,7 @@ return function(root)
   local protocol = dofile(root .. "rptk_protocol.lua")(json)
   local sessions = dofile(root .. "rptk_sessions.lua")(protocol)
   local state = dofile(root .. "rptk_state.lua")(sessions)
-  local tracks = dofile(root .. "rptk_tracks.lua")()
+  local tracks = dofile(root .. "rptk_tracks.lua")(json)
   local items = dofile(root .. "rptk_midi_items.lua")(json, state, tracks)
   local preview = dofile(root .. "rptk_preview.lua")(state, items)
   local udp = dofile(root .. "rptk_udp.lua")(sessions)
@@ -33,8 +33,9 @@ return function(root)
   if not ok_socket then ok_socket, socket = pcall(require, "socket.core") end
 
   local host = {
-    version = "0.1.0", socket = ok_socket and socket or nil,
+    version = "0.2.0", socket = ok_socket and socket or nil,
     server = nil, clients = {}, last_state_at = 0, last_heartbeat_at = 0,
+    project_generation = "",
   }
 
   local function console(message) reaper.ShowConsoleMsg("[RPTK] " .. message .. "\n") end
@@ -87,8 +88,8 @@ return function(root)
       handshake_failure(client, request, "protocol_major_mismatch", "Host supports protocol major 1.")
       return
     end
-    if (range.min_minor or 0) > 0 or (range.max_minor or -1) < 0 then
-      handshake_failure(client, request, "protocol_minor_unsupported", "Host supports protocol 1.0.")
+    if (range.min_minor or 0) > 1 or (range.max_minor or -1) < 1 then
+      handshake_failure(client, request, "protocol_minor_unsupported", "Host supports protocol 1.1.")
       return
     end
     local identity = request.client or {}
@@ -115,7 +116,7 @@ return function(root)
     client.session, client.handshake = session, true
     send(client, {
       protocol = "rptk", type = "hello_ack", request_id = request.request_id, ok = true,
-      negotiated_protocol = { major = 1, minor = 0 },
+      negotiated_protocol = { major = 1, minor = 1 },
       host = {
         host_version = host.version, reaper_version = reaper.GetAppVersion(),
         platform = reaper.GetOS(), capabilities = protocol.CAPABILITIES,
@@ -125,7 +126,9 @@ return function(root)
         heartbeat_interval_ms = 1000, udp_token = session.udp_token,
         udp_host = "127.0.0.1", udp_port = 9900,
       },
-      initial_state = state.build(items.public_state()),
+      initial_state = state.build(
+        items.public_state(session.client.app_id), preview.public_state(session.id)
+      ),
     })
   end
 
@@ -142,7 +145,9 @@ return function(root)
       sessions.touch(session, reaper.time_precise())
       return { lease_deadline = session.lease_deadline }
     elseif method == "state.get" then
-      return state.build(items.public_state())
+      return state.build(
+        items.public_state(session.client.app_id), preview.public_state(session.id)
+      )
     elseif method == "transport.set" then
       local playing = reaper.GetPlayState() & 1 == 1
       if payload.playing and not playing then reaper.OnPlayButton() end
@@ -153,19 +158,36 @@ return function(root)
       reaper.SetEditCurPos(state.ppq_to_time(math.floor(payload.ppq)), true, false)
       return { ppq = math.floor(payload.ppq) }
     elseif method == "track.capture_selection" then
-      local _, result = tracks.capture(payload.role)
+      local _, result = tracks.capture(
+        session.client.app_id, payload.role or "", payload.bind == true
+      )
       return result
     elseif method == "track.resolve" then
       local _, result = tracks.resolve(payload.track_ref)
       return result
+    elseif method == "track.resolve_bound" then
+      local _, result = tracks.resolve_bound(
+        session.client.app_id, payload.role or "", payload.fallback,
+        payload.bind_fallback == true
+      )
+      return result
+    elseif method == "track.binding.clear" then
+      tracks.clear_binding(session.client.app_id, payload.role or "")
+      return {}
+    elseif method == "resource.list" then
+      return {
+        resources = items.public_state(
+          session.client.app_id, payload.kind, payload.target_guid
+        )
+      }
     elseif method == "midi.item.insert" then
       payload.operation_id = payload.operation_id or request.operation_id
       local resource = items.insert(session, payload, "midi_item")
-      return { resource_id = resource.resource_id }
+      return items.public(resource)
     elseif method == "midi.item.replace" then
       payload.operation_id = payload.operation_id or request.operation_id
       local resource = items.replace(session, payload)
-      return { resource_id = resource.resource_id }
+      return items.public(resource)
     elseif method == "midi.preview.prepare" then
       return preview.prepare(session, payload)
     elseif method == "midi.preview.update" then
@@ -239,6 +261,8 @@ return function(root)
     end
     math.randomseed(math.floor(reaper.time_precise() * 1000000))
     preview.restore_stale()
+    items.scan()
+    host.project_generation = state.build({}).project_generation
     local server, err = host.socket.bind("127.0.0.1", tcp_port or 9901)
     if not server then return nil, "TCP bind failed: " .. tostring(err) end
     server:settimeout(0)
@@ -274,6 +298,12 @@ return function(root)
     end
     if now - host.last_state_at >= 0.1 then
       host.last_state_at = now
+      local generation = state.build({}).project_generation
+      if generation ~= host.project_generation then
+        preview.cleanup_all()
+        items.scan()
+        host.project_generation = generation
+      end
       local snapshot = state.build(items.public_state())
       local snapshot_sequence = snapshot.state_seq
       snapshot.state_seq = 0
@@ -284,7 +314,14 @@ return function(root)
         for client in pairs(host.clients) do
           if client.session then
             client.session.event_seq = client.session.event_seq + 1
-            send(client, protocol.event("state.changed", client.session.event_seq, snapshot))
+            local client_snapshot = state.build(
+              items.public_state(client.session.client.app_id),
+              preview.public_state(client.session.id)
+            )
+            client_snapshot.state_seq = snapshot.state_seq
+            send(client, protocol.event(
+              "state.changed", client.session.event_seq, client_snapshot
+            ))
           end
         end
       end

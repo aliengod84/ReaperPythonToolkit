@@ -1,10 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["resource_id", "active", "active_revision"],
+  "required": ["resource_id", "active", "status", "origin_ppq", "phrase_length_ppq", "count_in", "count_in_start_ppq", "active_revision"],
   "properties": {
     "resource_id": {"type": "string"},
     "active": {"type": "boolean"},
+    "status": {"enum": ["idle", "queued", "count_in", "playing", "switch_pending"]},
+    "origin_ppq": {"type": "integer"},
+    "phrase_length_ppq": {"type": "integer", "minimum": 0},
+    "count_in": {"type": "boolean"},
+    "count_in_start_ppq": {"type": "integer"},
+    "pending_switch_ppq": {"type": ["integer", "null"]},
     "active_revision": {"type": "string"},
     "pending_revision": {"type": ["string", "null"]}
   }

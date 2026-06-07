@@ -1,4 +1,4 @@
-# Protocol 1.0
+# Protocol 1.1
 
 TCP defaults to `127.0.0.1:9901`. Each UTF-8 JSON object ends in `\n`; the
 maximum encoded message is 1 MiB. The first message is `hello` and the reply is
@@ -21,6 +21,19 @@ event: "RPTK" u8-major u8-type token[16] u32-generation u32-sequence
 reset: "RPTK" u8-major u8-type token[16] u32-generation u32-sequence
 ```
 
-Packet types are 1 event, 2 reset/all-notes-off, 3 probe, and 4 probe response.
+Packet types are 1 event and 2 reset/all-notes-off. Values 3 and 4 are reserved.
 The Python constants use `!4sBB16sIIdBBB` and `!4sBB16sII`.
 
+Protocol 1.1 adds `track.binding` and `resource.read`, full typed preview state,
+logical target and actual track GUIDs on MIDI resources, insertion/replacement
+options, and the following methods:
+
+```text
+track.resolve_bound
+track.binding.clear
+resource.list
+```
+
+Bindings are scoped by current project, `app_id`, and opaque role. Resource
+queries are implicitly restricted to the connected app. Durable MIDI items are
+rediscovered from exact RPTK tags; names are never treated as ownership.

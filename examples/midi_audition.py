@@ -3,7 +3,7 @@ import time
 from reaper_toolkit import ClientIdentity, ReaperClient
 
 client = ReaperClient(
-    ClientIdentity("com.example.rptk-audition", "0.1.0", "RPTK Audition"),
+    ClientIdentity("com.example.rptk-audition", "0.2.0", "RPTK Audition"),
     {"midi.udp_audition"},
 )
 try:

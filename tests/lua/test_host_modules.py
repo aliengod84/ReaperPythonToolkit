@@ -1,0 +1,222 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).parents[2]
+
+
+def run_lua(body: str) -> str:
+    script = (
+        f"local root = {json.dumps(str(ROOT / 'reaper') + '/')}\n"
+        f"{body}"
+    )
+    result = subprocess.run(
+        ["lua", "-"], input=script, text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_track_bindings_are_scoped_by_app_and_role_and_clear_stale_guids():
+    run_lua(
+        """
+local json = dofile(root .. "json.lua")
+local ext = {}
+local track_list = {
+  { guid = "selected", name = "Selected" },
+  { guid = "fallback", name = "MMG Drums" },
+}
+local selected = track_list[1]
+reaper = {}
+function reaper.GetProjExtState(_, section, key)
+  return 1, ext[section .. ":" .. key] or ""
+end
+function reaper.SetProjExtState(_, section, key, value)
+  ext[section .. ":" .. key] = value
+end
+function reaper.CountTracks() return #track_list end
+function reaper.GetTrack(_, index) return track_list[index + 1] end
+function reaper.GetTrackGUID(track) return track.guid end
+function reaper.GetTrackName(track) return true, track.name end
+function reaper.CountSelectedTracks() return selected and 1 or 0 end
+function reaper.GetSelectedTrack() return selected end
+function reaper.GetSetMediaTrackInfo_String(track, key, value, set)
+  if set and key == "P_NAME" then track.name = value end
+  return true, track.name
+end
+function reaper.InsertTrackAtIndex(index)
+  table.insert(track_list, index + 1, { guid = "created", name = "" })
+end
+local tracks = dofile(root .. "rptk_tracks.lua")(json)
+local _, explicit = tracks.capture("com.example.one", "drums", true)
+assert(explicit.binding == "explicit")
+local _, role_two = tracks.capture("com.example.one", "effects", true)
+assert(role_two.binding == "explicit")
+local _, app_two = tracks.resolve_bound("com.example.two", "drums", {
+  name = "MMG Drums", role = "drums", create = "if_missing"
+}, true)
+assert(app_two.guid == "fallback" and app_two.binding == "fallback")
+track_list[1] = nil
+local compact = {}
+for _, value in pairs(track_list) do compact[#compact + 1] = value end
+track_list = compact
+local _, stale = tracks.resolve_bound("com.example.one", "drums", {
+  name = "MMG Drums", role = "drums", create = "if_missing"
+}, true)
+assert(stale.guid == "fallback" and stale.binding == "fallback")
+local _, still_separate = tracks.resolve_bound("com.example.two", "drums", {
+  name = "unused", role = "drums", create = "never"
+}, false)
+assert(still_separate.guid == "fallback")
+"""
+    )
+
+
+@pytest.mark.parametrize(
+    ("numerator", "denominator", "bar_ppq"),
+    [(4, 4, 3840), (3, 4, 2880), (6, 8, 2880), (7, 8, 3360)],
+)
+def test_preview_count_in_is_one_native_measure(numerator, denominator, bar_ppq):
+    output = run_lua(
+        f"""
+local qn_per_measure = {numerator} * 4 / {denominator}
+local measure_seconds = qn_per_measure * 0.5
+reaper = {{}}
+function reaper.TimeMap2_timeToBeats(_, seconds)
+  return 0, math.floor(seconds / measure_seconds)
+end
+function reaper.TimeMap2_beatsToTime(_, _, measure)
+  return measure * measure_seconds
+end
+local state = {{
+  time_to_ppq = function(seconds) return math.floor(seconds / 0.5 * 960) end
+}}
+local preview = dofile(root .. "rptk_preview.lua")(state, {{}})
+local exact_start, exact_origin = preview.measure_plan(0, true)
+local mid_start, mid_origin = preview.measure_plan(measure_seconds / 2, true)
+print(exact_start, exact_origin, mid_start, mid_origin)
+"""
+    )
+    assert tuple(map(int, output.split())) == (0, bar_ppq, bar_ppq, bar_ppq * 2)
+
+
+def test_atomic_insert_and_replace_keep_exact_resource_identity():
+    run_lua(
+        """
+local json = dofile(root .. "json.lua")
+local cursor = 0
+local undo = {}
+local target = { guid = "target", name = "Target", items = {}, depth = 0 }
+local tracks_list = { target }
+reaper = {}
+function reaper.CountTracks() return #tracks_list end
+function reaper.GetTrack(_, index) return tracks_list[index + 1] end
+function reaper.GetTrackGUID(track) return track.guid end
+function reaper.GetTrackName(track) return true, track.name end
+function reaper.GetMediaTrackInfo_Value(track, key)
+  if key == "IP_TRACKNUMBER" then
+    for index, value in ipairs(tracks_list) do if value == track then return index end end
+  end
+  if key == "I_FOLDERDEPTH" then return track.depth end
+  return 0
+end
+function reaper.GetSetMediaTrackInfo_String(track, key, value, set)
+  track.ext = track.ext or {}
+  if set then track.ext[key] = value end
+  return true, track.ext[key] or ""
+end
+function reaper.CountTrackMediaItems(track) return #track.items end
+function reaper.GetTrackMediaItem(track, index) return track.items[index + 1] end
+function reaper.CreateNewMIDIItemInProj(track, start_time, end_time)
+  local item = {
+    position = start_time, length = end_time - start_time,
+    take = { notes = {} }, ext = {},
+  }
+  table.insert(track.items, item)
+  return item
+end
+function reaper.GetActiveTake(item) return item.take end
+function reaper.MIDI_InsertNote(take, _, _, start_ppq, end_ppq)
+  take.notes[#take.notes + 1] = { start_ppq, end_ppq }
+end
+function reaper.MIDI_Sort() end
+function reaper.GetSetMediaItemInfo_String(item, key, value, set)
+  if set then item.ext[key] = value end
+  return true, item.ext[key] or ""
+end
+function reaper.GetMediaItemInfo_Value(item, key)
+  if key == "D_POSITION" then return item.position end
+  if key == "D_LENGTH" then return item.length end
+  return 0
+end
+function reaper.DeleteTrackMediaItem(track, item)
+  for index, value in ipairs(track.items) do
+    if value == item then table.remove(track.items, index); return true end
+  end
+end
+function reaper.ValidatePtr(item) return item ~= nil end
+function reaper.GetCursorPosition() return cursor end
+function reaper.SetEditCurPos(value) cursor = value end
+function reaper.UpdateArrange() end
+function reaper.Undo_BeginBlock2() undo[#undo + 1] = "begin" end
+function reaper.Undo_EndBlock2(_, label) undo[#undo + 1] = label end
+local state = {
+  ppq = function() return 960 end,
+  ppq_to_time = function(value) return value / 960 end,
+  time_to_ppq = function(value) return math.floor(value * 960 + 0.5) end,
+}
+local tracks = {
+  resolve_bound = function() return target, {} end,
+  resolve = function() return target, {} end,
+}
+local items = dofile(root .. "rptk_midi_items.lua")(json, state, tracks)
+local session = { id = "session", client = { app_id = "com.example.app" } }
+local phrase = {
+  source_ppqn = 960, length_ppq = 3840, revision = string.rep("a", 64),
+  notes = {{ start_ppq = 0, duration_ppq = 120, channel = 9, pitch = 36, velocity = 100 }},
+}
+local inserted = items.insert(session, {
+  track_ref = { role = "drums", name = "Target", create = "if_missing" },
+  midi_phrase = phrase, metadata = { schema = 3 },
+  options = { start_ppq = 3840, collision_policy = "layer",
+    advance_cursor = "end", undo_label = "Insert" },
+}, "midi_item")
+assert(inserted.start_ppq == 3840 and inserted.length_ppq == 3840)
+assert(cursor == 8)
+assert(inserted.target_guid == "target" and inserted.track_guid == "target")
+local id = inserted.resource_id
+phrase.revision = string.rep("b", 64)
+local replaced = items.replace(session, {
+  resource_id = id, midi_phrase = phrase, metadata = { schema = 3 },
+  options = { advance_cursor = "start", undo_label = "Replace" },
+})
+assert(replaced.resource_id == id and replaced.start_ppq == 3840)
+assert(cursor == 4 and #target.items == 1)
+assert(undo[2] == "Insert" and undo[4] == "Replace")
+"""
+    )
+
+
+def test_udp_cleanup_sends_note_offs_only_for_the_owned_session():
+    run_lua(
+        """
+local sent = {}
+local one = { active_notes = { ["9:36"] = true }, udp_queue = { 1 } }
+local two = { active_notes = { ["9:38"] = true }, udp_queue = { 2 } }
+reaper = {
+  StuffMIDIMessage = function(_, status, pitch, velocity)
+    sent[#sent + 1] = { status, pitch, velocity }
+  end
+}
+local sessions = { active = { one = one, two = two } }
+local udp = dofile(root .. "rptk_udp.lua")(sessions)
+udp.cleanup_session(one)
+assert(#sent == 1 and sent[1][2] == 36)
+assert(next(one.active_notes) == nil and #one.udp_queue == 0)
+assert(two.active_notes["9:38"] == true and #two.udp_queue == 1)
+"""
+    )

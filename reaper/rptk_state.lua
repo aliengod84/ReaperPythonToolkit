@@ -18,7 +18,7 @@ return function(sessions)
     }
   end
 
-  function state.build(resources)
+  function state.build(resources, preview_state)
     local identity = project_identity()
     if state.generation ~= identity then
       state.generation = identity
@@ -40,6 +40,7 @@ return function(sessions)
         edit_cursor = cursor(edit), play_cursor = cursor(play),
       },
       sessions = sessions.public_state(), resources = resources or {},
+      preview = preview_state,
     }
   end
 

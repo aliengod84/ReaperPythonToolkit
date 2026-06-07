@@ -8,7 +8,7 @@ CAPABILITIES = {
     "project.state", "transport.read", "transport.control", "track.read",
     "track.resolve", "track.capture_selection", "midi.item", "midi.preview",
     "midi.udp_audition", "settings.repeat_guard", "settings.metronome_guard",
-    "session.multi_client",
+    "session.multi_client", "track.binding", "resource.read",
 }
 
 
@@ -57,8 +57,8 @@ class FakeHost:
                 ack = {
                     "protocol": "rptk", "type": "hello_ack",
                     "request_id": hello["request_id"], "ok": True,
-                    "negotiated_protocol": {"major": 1, "minor": 0},
-                    "host": {"host_version": "0.1.0", "reaper_version": "fake",
+                    "negotiated_protocol": {"major": 1, "minor": 1},
+                    "host": {"host_version": "0.2.0", "reaper_version": "fake",
                              "platform": "test", "capabilities": sorted(CAPABILITIES)},
                     "session": {"session_id": f"session-{self.clients}",
                                 "lease_timeout_ms": 5000, "heartbeat_interval_ms": 100,
@@ -90,4 +90,3 @@ class FakeHost:
         finally:
             writer.close()
             await writer.wait_closed()
-

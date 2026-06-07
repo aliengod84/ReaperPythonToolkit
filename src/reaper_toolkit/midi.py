@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import struct
+import threading
 from dataclasses import dataclass
 
 MAGIC = b"RPTK"
@@ -51,21 +52,24 @@ class MidiAuditionSender:
 
     def __post_init__(self) -> None:
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._lock = threading.Lock()
 
     def send(
         self, status: int, data1: int, data2: int, *, delay_seconds: float = 0.0
     ) -> None:
-        self.sequence += 1
-        packet = encode_midi_event(
-            self.token, self.generation, self.sequence, delay_seconds, status, data1, data2
-        )
-        self._socket.sendto(packet, (self.host, self.port))
+        with self._lock:
+            self.sequence += 1
+            packet = encode_midi_event(
+                self.token, self.generation, self.sequence, delay_seconds, status, data1, data2
+            )
+            self._socket.sendto(packet, (self.host, self.port))
 
     def reset(self) -> None:
-        self.generation = (self.generation + 1) & 0xFFFFFFFF
-        self.sequence = 0
-        self._socket.sendto(encode_reset(self.token, self.generation), (self.host, self.port))
+        with self._lock:
+            self.generation = (self.generation + 1) & 0xFFFFFFFF
+            self.sequence = 0
+            self._socket.sendto(encode_reset(self.token, self.generation), (self.host, self.port))
 
     def close(self) -> None:
-        self._socket.close()
-
+        with self._lock:
+            self._socket.close()

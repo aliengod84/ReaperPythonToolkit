@@ -6,7 +6,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 
 class ConnectionState(StrEnum):
@@ -91,7 +91,8 @@ class ProjectState:
     project_generation: str
     project: Project
     sessions: tuple[dict[str, Any], ...] = ()
-    resources: tuple[dict[str, Any], ...] = ()
+    resources: tuple[ResourceState, ...] = ()
+    preview: PreviewState | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> ProjectState:
@@ -111,7 +112,12 @@ class ProjectState:
                 play_cursor=CursorState(**project["play_cursor"]),
             ),
             sessions=tuple(value.get("sessions") or ()),
-            resources=tuple(value.get("resources") or ()),
+            resources=tuple(
+                ResourceState.from_dict(resource) for resource in (value.get("resources") or ())
+            ),
+            preview=(
+                PreviewState.from_dict(value["preview"]) if value.get("preview") else None
+            ),
         )
 
 
@@ -142,6 +148,7 @@ class TrackState:
     exists: bool
     created: bool = False
     role: str = ""
+    binding: Literal["explicit", "fallback", "none"] = "none"
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> TrackState:
@@ -215,8 +222,33 @@ class PreviewOptions:
 class PreviewState:
     resource_id: str
     active: bool
-    active_revision: str
+    active_revision: str = ""
+    status: Literal["idle", "queued", "count_in", "playing", "switch_pending"] = "idle"
+    origin_ppq: int = 0
+    phrase_length_ppq: int = 0
+    count_in: bool = False
+    count_in_start_ppq: int = 0
+    pending_switch_ppq: int | None = None
     pending_revision: str | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> PreviewState:
+        return cls(
+            resource_id=str(value.get("resource_id", "")),
+            active=bool(value.get("active", False)),
+            status=value.get("status", "idle"),
+            origin_ppq=int(value.get("origin_ppq", 0)),
+            phrase_length_ppq=int(value.get("phrase_length_ppq", 0)),
+            count_in=bool(value.get("count_in", False)),
+            count_in_start_ppq=int(value.get("count_in_start_ppq", 0)),
+            pending_switch_ppq=(
+                None
+                if value.get("pending_switch_ppq") is None
+                else int(value["pending_switch_ppq"])
+            ),
+            active_revision=str(value.get("active_revision", "")),
+            pending_revision=value.get("pending_revision"),
+        )
 
 
 @dataclass(frozen=True)
@@ -225,4 +257,36 @@ class ResourceState:
     kind: str
     app_id: str
     session_id: str | None = None
+    target_guid: str = ""
+    track_guid: str = ""
+    start_ppq: int = 0
+    length_ppq: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> ResourceState:
+        return cls(
+            resource_id=str(value["resource_id"]),
+            kind=str(value["kind"]),
+            app_id=str(value["app_id"]),
+            session_id=value.get("session_id"),
+            target_guid=str(value.get("target_guid", "")),
+            track_guid=str(value.get("track_guid", "")),
+            start_ppq=int(value.get("start_ppq", 0)),
+            length_ppq=int(value.get("length_ppq", 0)),
+            metadata=dict(value.get("metadata") or {}),
+        )
+
+
+@dataclass(frozen=True)
+class InsertOptions:
+    start_ppq: int
+    collision_policy: Literal["allow", "reject", "layer"] = "allow"
+    advance_cursor: Literal["none", "start", "end"] = "none"
+    undo_label: str | None = None
+
+
+@dataclass(frozen=True)
+class ReplaceOptions:
+    advance_cursor: Literal["none", "start", "end"] = "none"
+    undo_label: str | None = None

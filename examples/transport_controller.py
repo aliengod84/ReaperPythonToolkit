@@ -1,7 +1,7 @@
 from reaper_toolkit import ClientIdentity, ReaperClient
 
 client = ReaperClient(
-    ClientIdentity("com.example.rptk-transport", "0.1.0", "RPTK Transport"),
+    ClientIdentity("com.example.rptk-transport", "0.2.0", "RPTK Transport"),
     {"project.state", "transport.control"},
 )
 try:

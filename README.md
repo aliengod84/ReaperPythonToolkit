@@ -6,7 +6,7 @@ multiple local Python clients with project state, transport control, track
 resolution, MIDI item workflows, synchronized temporary previews, and
 low-latency MIDI audition.
 
-> **Maturity:** `0.1.0` incubation release. Protocol 1.0 is frozen, but Python
+> **Maturity:** `0.2.0` incubation release. Protocol 1.1 is frozen, but Python
 > APIs may change between 0.x minor releases. Reaper 7 on Windows is the first
 > validation target.
 
@@ -44,7 +44,7 @@ from reaper_toolkit import AsyncReaperClient, ClientIdentity
 
 async def main():
     client = AsyncReaperClient(
-        ClientIdentity("com.example.transport", "0.1.0", "Transport Example"),
+        ClientIdentity("com.example.transport", "0.2.0", "Transport Example"),
         {"project.state", "transport.control"},
     )
     await client.connect()

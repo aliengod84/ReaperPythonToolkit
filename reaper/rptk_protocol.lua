@@ -1,13 +1,13 @@
 return function(json)
   local protocol = {}
   protocol.MAJOR = 1
-  protocol.MINOR = 0
+  protocol.MINOR = 1
   protocol.MAX_MESSAGE = 1024 * 1024
   protocol.CAPABILITIES = {
     "project.state", "transport.read", "transport.control", "track.read",
     "track.resolve", "track.capture_selection", "midi.item", "midi.preview",
     "midi.udp_audition", "settings.repeat_guard", "settings.metronome_guard",
-    "session.multi_client",
+    "session.multi_client", "track.binding", "resource.read",
   }
 
   function protocol.error(code, message, retryable, details)
