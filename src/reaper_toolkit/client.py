@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import functools
+import concurrent.futures
 import threading
 from collections.abc import Coroutine
 from typing import Any
@@ -33,6 +33,18 @@ class ReaperClient:
 
     def _run(self, coroutine: Coroutine[Any, Any, Any], timeout: float | None = None) -> Any:
         return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result(timeout)
+
+    def _call_on_loop(self, function, *args, **kwargs):
+        future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+
+        def invoke() -> None:
+            try:
+                future.set_result(function(*args, **kwargs))
+            except BaseException as exc:
+                future.set_exception(exc)
+
+        self._loop.call_soon_threadsafe(invoke)
+        return future.result()
 
     @property
     def last_status(self):
@@ -168,15 +180,13 @@ class ReaperClient:
         return self._run(self._client.stop_midi_preview(resource_id, timeout=timeout), timeout)
 
     def send_midi_event(self, status, data1, data2, *, delay_seconds=0.0):
-        self._loop.call_soon_threadsafe(
-            functools.partial(
-                self._client.send_midi_event,
-                status,
-                data1,
-                data2,
-                delay_seconds=delay_seconds,
-            )
+        return self._call_on_loop(
+            self._client.send_midi_event,
+            status,
+            data1,
+            data2,
+            delay_seconds=delay_seconds,
         )
 
     def reset_midi_generation(self):
-        self._loop.call_soon_threadsafe(self._client.reset_midi_generation)
+        return self._call_on_loop(self._client.reset_midi_generation)

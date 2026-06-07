@@ -1,11 +1,14 @@
 import pytest
 
 from reaper_toolkit import (
+    ClientIdentity,
+    ConnectionLostError,
     InsertOptions,
     MidiNote,
     MidiPhrase,
     PreviewState,
     ProjectState,
+    ReaperClient,
     ReplaceOptions,
 )
 
@@ -77,3 +80,12 @@ def test_protocol_11_models_parse_full_resource_and_preview_state():
     )
     assert InsertOptions(0, "layer", "end").collision_policy == "layer"
     assert ReplaceOptions("start").advance_cursor == "start"
+
+
+def test_sync_udp_failure_is_returned_to_the_caller():
+    client = ReaperClient(ClientIdentity("com.example.udp", "1", "UDP"))
+    try:
+        with pytest.raises(ConnectionLostError):
+            client.reset_midi_generation()
+    finally:
+        client.close()
