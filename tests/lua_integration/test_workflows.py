@@ -51,6 +51,12 @@ def client(host: LuaHost, app: str, instance: str) -> AsyncReaperClient:
     )
 
 
+def reconnecting_client(host: LuaHost, app: str, instance: str) -> AsyncReaperClient:
+    subject = client(host, app, instance)
+    subject.auto_reconnect = True
+    return subject
+
+
 @pytest.mark.asyncio
 async def test_transport_cursor_track_binding_and_state_events(lua_host: LuaHost):
     subject = client(lua_host, "com.example.workflow", "commands")
@@ -182,6 +188,39 @@ async def test_preview_ownership_update_stop_and_disconnect_cleanup(lua_host: Lu
     finally:
         await two.close()
         await one.close()
+
+
+@pytest.mark.asyncio
+async def test_preview_session_is_reclaimed_after_transient_socket_loss(
+    lua_host: LuaHost,
+):
+    subject = reconnecting_client(
+        lua_host, "com.example.preview.reclaim", "preview-reclaim"
+    )
+    await subject.connect()
+    try:
+        preview = await subject.prepare_midi_preview(
+            TrackRef(name="RPTK Reclaim Track"),
+            phrase(),
+            PreviewOptions(count_in=False),
+        )
+        first_session = subject.last_status.session_id
+        assert subject._writer is not None
+        subject._writer.transport.abort()
+
+        deadline = time.monotonic() + 3
+        while subject.last_status.ready and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        await subject.wait_until_ready(5)
+
+        assert subject.last_status.session_id == first_session
+        state = await subject.refresh_state()
+        assert state.preview is not None
+        assert state.preview.resource_id == preview.resource_id
+        assert state.preview.active
+        await subject.stop_midi_preview(preview.resource_id)
+    finally:
+        await subject.close()
 
 
 async def wait_for_midi(

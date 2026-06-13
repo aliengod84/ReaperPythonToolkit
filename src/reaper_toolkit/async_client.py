@@ -248,6 +248,9 @@ class AsyncReaperClient:
     async def close(self) -> None:
         self._closing = True
         self._set_status(ConnectionState.CLOSING, connected=self._writer is not None)
+        if self._writer is not None and self.last_status.ready:
+            with contextlib.suppress(Exception):
+                await self.request("session.close", timeout=1.0)
         current = asyncio.current_task()
         if self._connect_task and self._connect_task is not current:
             self._connect_task.cancel()

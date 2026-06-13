@@ -51,12 +51,21 @@ return function(root)
     if #client.outgoing > protocol.MAX_MESSAGE * 2 then client.close = true end
   end
 
-  local function close_client(client)
+  local function cleanup_session(session)
+    preview.cleanup_session(session)
+    items.cleanup_session(session)
+    udp.cleanup_session(session)
+    sessions.remove(session)
+  end
+
+  local function close_client(client, now)
     if client.session then
-      preview.cleanup_session(client.session)
-      items.cleanup_session(client.session)
       udp.cleanup_session(client.session)
-      sessions.remove(client.session)
+      sessions.detach(
+        client.session,
+        now or reaper.time_precise(),
+        preview.public_state(client.session.id) ~= nil
+      )
     end
     pcall(function() client.socket:close() end)
     host.clients[client] = nil
@@ -120,7 +129,8 @@ return function(root)
         platform = reaper.GetOS(), capabilities = protocol.CAPABILITIES,
       },
       session = {
-        session_id = session.id, lease_timeout_ms = 5000,
+        session_id = session.id,
+        lease_timeout_ms = sessions.lease_timeout_ms(session),
         heartbeat_interval_ms = 1000, udp_token = session.udp_token,
         udp_host = "127.0.0.1", udp_port = host.udp_port,
       },
@@ -150,8 +160,15 @@ return function(root)
   local function command(session, request)
     local method, payload = request.method, request.payload or {}
     if method == "session.heartbeat" then
-      sessions.touch(session, reaper.time_precise())
+      sessions.touch(
+        session,
+        reaper.time_precise(),
+        preview.public_state(session.id) ~= nil
+      )
       return { lease_deadline = session.lease_deadline }
+    elseif method == "session.close" then
+      session.close_requested = true
+      return {}
     elseif method == "state.get" then
       return state.build(
         items.public_state(session.client.app_id), preview.public_state(session.id)
@@ -213,6 +230,11 @@ return function(root)
       client.close = true
       return
     end
+    sessions.touch(
+      client.session,
+      reaper.time_precise(),
+      preview.public_state(client.session.id) ~= nil
+    )
     local fingerprint = json.encode(request)
     local cached = client.session.response_cache[request.request_id]
     if cached then
@@ -232,6 +254,9 @@ return function(root)
       fingerprint = fingerprint, response = response, at = reaper.time_precise(),
     }
     send(client, response)
+    if request.method == "session.close" and ok then
+      client.close_session_after_write = true
+    end
   end
 
   local function read_client(client, now)
@@ -239,6 +264,11 @@ return function(root)
       local data, err, partial = client.socket:receive(65536)
       local received = data or partial
       if received and #received > 0 then
+        if client.session then
+          sessions.touch(
+            client.session, now, preview.public_state(client.session.id) ~= nil
+          )
+        end
         client.buffer = client.buffer .. received
         if #client.buffer > protocol.MAX_MESSAGE then client.close = true; return end
       end
@@ -305,12 +335,23 @@ return function(root)
       if not client.handshake and now - client.accepted_at > 2 then client.close = true end
       read_client(client, now)
       socket_io.flush(client)
-      if client.close or (client.close_after_write and client.outgoing == "") then close_client(client) end
+      if client.close_session_after_write and client.outgoing == "" then
+        cleanup_session(client.session)
+        client.session = nil
+        pcall(function() client.socket:close() end)
+        host.clients[client] = nil
+      elseif client.close or (client.close_after_write and client.outgoing == "") then
+        close_client(client, now)
+      end
     end
     for _, session in ipairs(sessions.expired(now)) do
       for client in pairs(host.clients) do
-        if client.session == session then close_client(client) end
+        if client.session == session then
+          pcall(function() client.socket:close() end)
+          host.clients[client] = nil
+        end
       end
+      cleanup_session(session)
     end
     udp.poll(now)
     preview.tick(now)
@@ -360,7 +401,11 @@ return function(root)
   end
 
   function host.close()
-    for client in pairs(host.clients) do close_client(client) end
+    for client in pairs(host.clients) do
+      pcall(function() client.socket:close() end)
+      host.clients[client] = nil
+    end
+    for _, session in ipairs(sessions.all()) do cleanup_session(session) end
     udp.close()
     if host.server then host.server:close(); host.server = nil end
   end

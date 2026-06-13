@@ -386,3 +386,28 @@ preview.tick(4.1)
 assert(preview.active.preview == nil and deleted == 1)
 """
     )
+
+
+def test_sessions_reclaim_orphan_and_extend_active_preview_lease():
+    run_lua(
+        """
+local sessions = dofile(root .. "rptk_sessions.lua")({})
+local identity = {
+  app_id = "com.example.app", instance_id = "instance", display_name = "App",
+}
+local session = assert(sessions.create(identity, "socket-one", 10))
+assert(session.lease_deadline == 15)
+sessions.touch(session, 11, true)
+assert(session.lease_deadline == 41)
+sessions.detach(session, 12, true)
+assert(session.attached == false and session.lease_deadline == 42)
+local reclaimed, err, was_reclaimed =
+  sessions.create(identity, "socket-two", 13)
+assert(err == nil and was_reclaimed == true)
+assert(reclaimed == session)
+assert(reclaimed.id == session.id and reclaimed.udp_token == session.udp_token)
+assert(reclaimed.attached == true and reclaimed.socket == "socket-two")
+local duplicate, duplicate_err = sessions.create(identity, "socket-three", 14)
+assert(duplicate == nil and duplicate_err == "duplicate_instance")
+"""
+    )
