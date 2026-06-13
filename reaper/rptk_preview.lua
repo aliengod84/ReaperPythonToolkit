@@ -180,12 +180,15 @@ return function(state, items)
     if current.resource.session_id ~= session.id then
       error("ownership_error:preview belongs to another session")
     end
+    local update_payload = {}
+    for key, value in pairs(payload) do update_payload[key] = value end
+    update_payload.track_ref = { guid = current.resource.target_guid }
     local play = state.time_to_ppq(reaper.GetPlayPosition())
     if current.pending and play >= current.pending_switch then promote(current) end
     if play < current.origin then
       if current.pending then items.delete(current.pending) end
       items.delete(current.resource)
-      local replacement = create(session, payload, current.origin, 0)
+      local replacement = create(session, update_payload, current.origin, 0)
       current.resource = items.adopt_id(replacement, current.id)
       current.phrase_length = replacement.length_ppq
       current.active_revision = payload.midi_phrase.revision
@@ -206,7 +209,7 @@ return function(state, items)
         payload.midi_phrase.source_ppqn + 0.5)
     )
     current.pending = create(
-      session, payload, switch, (switch - current.origin) % phrase_length
+      session, update_payload, switch, (switch - current.origin) % phrase_length
     )
     set_item_end(current.resource, switch)
     current.pending_switch = switch

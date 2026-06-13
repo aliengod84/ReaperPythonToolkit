@@ -35,7 +35,7 @@ return function(root)
   local host = {
     version = "0.2.0", socket = ok_socket and socket or nil,
     server = nil, clients = {}, last_state_at = 0, last_heartbeat_at = 0,
-    project_generation = "",
+    project_generation = "", tcp_port = 9901, udp_port = 9900,
   }
 
   local function console(message) reaper.ShowConsoleMsg("[RPTK] " .. message .. "\n") end
@@ -140,7 +140,7 @@ return function(root)
       session = {
         session_id = session.id, lease_timeout_ms = 5000,
         heartbeat_interval_ms = 1000, udp_token = session.udp_token,
-        udp_host = "127.0.0.1", udp_port = 9900,
+        udp_host = "127.0.0.1", udp_port = host.udp_port,
       },
       initial_state = state.build(
         items.public_state(session.client.app_id), preview.public_state(session.id)
@@ -150,7 +150,17 @@ return function(root)
 
   local function parse_error(err)
     local text = tostring(err)
-    local code, message = text:match("([a-z_]+):(.*)")
+    local first_line = text:match("^[^\n]+") or text
+    local known_codes = {
+      "invalid_request", "invalid_params", "resource_not_found", "resource_busy",
+      "ownership_error", "reaper_operation_failed", "resource_limit",
+      "operation_id_conflict",
+    }
+    local code, message
+    for _, candidate in ipairs(known_codes) do
+      message = first_line:match(candidate .. ":(.*)$")
+      if message then code = candidate; break end
+    end
     if not code then return protocol.error("reaper_operation_failed", text, false) end
     return protocol.error(code, message, code == "resource_busy")
   end
@@ -279,13 +289,17 @@ return function(root)
     preview.restore_stale()
     items.scan()
     host.project_generation = state.build({}).project_generation
-    local server, err = host.socket.bind("127.0.0.1", tcp_port or 9901)
+    host.tcp_port, host.udp_port = tcp_port or 9901, udp_port or 9900
+    local server, err = host.socket.bind("127.0.0.1", host.tcp_port)
     if not server then return nil, "TCP bind failed: " .. tostring(err) end
     server:settimeout(0)
     host.server = server
-    local ok, udp_err = udp.bind(host.socket, "127.0.0.1", udp_port or 9900)
+    local ok, udp_err = udp.bind(host.socket, "127.0.0.1", host.udp_port)
     if not ok then server:close(); host.server = nil; return nil, "UDP bind failed: " .. tostring(udp_err) end
-    console("host " .. host.version .. " listening on TCP 9901 and UDP 9900")
+    console(string.format(
+      "host %s listening on TCP %d and UDP %d",
+      host.version, host.tcp_port, host.udp_port
+    ))
     return true
   end
 

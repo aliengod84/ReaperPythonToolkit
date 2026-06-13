@@ -81,7 +81,27 @@ python -m pytest
 python -m ruff check .
 ```
 
-Headless CI uses a loopback fake host. Reaper behavior must also pass
-[the manual checklist](docs/manual-reaper-validation.md).
+The default suite includes Python fake-host tests and Lua module tests. The
+cross-language suite runs the production Lua host core in a subprocess and
+connects the real Python client over TCP and UDP:
+
+```bash
+RPTK_LUA=/path/to/lua python -m pytest -m lua_integration
+```
+
+`RPTK_LUA` must select Lua 5.3+ with LuaSocket. If `lua` on `PATH` meets those
+requirements, the variable is optional. The tests skip with an actionable
+message when that runtime is unavailable.
+
+Tests against an actual Reaper process are intentionally opt-in:
+
+```bash
+RPTK_LIVE_REAPER=1 python -m pytest -m live_reaper
+```
+
+Start `rptk_host.lua` in Reaper first. Override `RPTK_LIVE_HOST` and
+`RPTK_LIVE_TCP_PORT` when the host is not at `127.0.0.1:9901`. See
+[the manual validation guide](docs/manual-reaper-validation.md) for side
+effects and the remaining manual checks.
 
 License: MIT.

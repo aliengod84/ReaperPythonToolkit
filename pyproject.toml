@@ -30,6 +30,10 @@ packages = ["src/reaper_toolkit"]
 addopts = "-q"
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "lua_integration: production Lua host against the Python client (requires LuaSocket)",
+  "live_reaper: opt-in validation against a manually started Reaper host",
+]
 
 [tool.ruff]
 line-length = 100
