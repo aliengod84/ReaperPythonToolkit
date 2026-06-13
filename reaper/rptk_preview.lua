@@ -271,9 +271,12 @@ return function(state, items)
         local play_seconds = reaper.GetPlayPosition()
         local play = state.time_to_ppq(play_seconds)
         if current.last_play then
-          local elapsed = math.max(0, now - (current.last_wall or now))
           local delta = play_seconds - current.last_play
-          if delta < -0.05 or delta > elapsed * 2.5 + 0.25 then
+          -- GetPlayPosition can briefly jitter backwards and can jump forwards
+          -- after a delayed defer tick. Neither means the user sought. Only a
+          -- clear backwards move is destructive; forward catch-up is safe
+          -- because the loop item and phase tracking remain valid.
+          if delta < -0.5 then
             remove[#remove + 1] = id
           end
         end

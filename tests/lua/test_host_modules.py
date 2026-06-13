@@ -305,3 +305,53 @@ assert(actions[2] == "delete:preview")
 assert(actions[3] == "delete:pending")
 """
     )
+
+
+def test_preview_tick_ignores_transport_jitter_and_forward_catchup():
+    run_lua(
+        """
+local deleted = 0
+local play_position = 10
+local item = { position = 0, length = 256, alive = true }
+local resource = {
+  resource_id = "preview", item = item, session_id = "session",
+  length_ppq = 3840,
+}
+reaper = {
+  ValidatePtr = function(value) return value and value.alive end,
+  GetMediaItemInfo_Value = function(value, key)
+    if key == "D_POSITION" then return value.position end
+    if key == "D_LENGTH" then return value.length end
+    return 0
+  end,
+  SetMediaItemInfo_Value = function() end,
+  GetPlayState = function() return 1 end,
+  GetPlayPosition = function() return play_position end,
+  SetProjExtState = function() end,
+  GetSetRepeat = function() return 0 end,
+}
+local state = {
+  time_to_ppq = function(seconds) return seconds * 960 end,
+  ppq_to_time = function(ppq) return ppq / 960 end,
+}
+local items = {
+  delete = function() deleted = deleted + 1 end,
+  adopt_id = function(value) return value end,
+}
+local preview = dofile(root .. "rptk_preview.lua")(state, items)
+preview.active.preview = {
+  id = "preview", resource = resource, origin = 0, phrase_length = 3840,
+  status = "playing", prepared_at = 0,
+}
+preview.tick(1)
+play_position = 9.8
+preview.tick(1.1)
+assert(preview.active.preview ~= nil and deleted == 0)
+play_position = 20
+preview.tick(4)
+assert(preview.active.preview ~= nil and deleted == 0)
+play_position = 19
+preview.tick(4.1)
+assert(preview.active.preview == nil and deleted == 1)
+"""
+    )
