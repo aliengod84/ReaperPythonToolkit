@@ -221,13 +221,15 @@ return function(state, items)
     return public(current)
   end
 
-  function preview.stop(session, id)
+  function preview.stop(session, id, stop_transport)
     local current = preview.active[id]
     if not current then return public(nil) end
     if current.resource.session_id ~= session.id then
       error("ownership_error:preview belongs to another session")
     end
-    if reaper.GetPlayState() & 1 == 1 then reaper.OnStopButton() end
+    if stop_transport ~= false and reaper.GetPlayState() & 1 == 1 then
+      reaper.OnStopButton()
+    end
     items.delete(current.resource)
     if current.pending then items.delete(current.pending) end
     preview.active[id], preview.owner = nil, nil
@@ -243,7 +245,7 @@ return function(state, items)
     for id, current in pairs(preview.active) do
       if current.resource.session_id == session.id then remove[#remove + 1] = id end
     end
-    for _, id in ipairs(remove) do preview.stop(session, id) end
+    for _, id in ipairs(remove) do preview.stop(session, id, false) end
   end
 
   function preview.cleanup_all()

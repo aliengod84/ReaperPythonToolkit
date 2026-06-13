@@ -307,6 +307,37 @@ assert(actions[3] == "delete:pending")
     )
 
 
+def test_preview_session_cleanup_does_not_stop_global_transport():
+    run_lua(
+        """
+local stopped = 0
+local deleted = 0
+local resource = {
+  resource_id = "preview", session_id = "session", item = {},
+}
+reaper = {
+  GetPlayState = function() return 1 end,
+  OnStopButton = function() stopped = stopped + 1 end,
+  SetProjExtState = function() end,
+  GetSetRepeat = function() return 0 end,
+}
+local state = {}
+local items = {
+  delete = function() deleted = deleted + 1 end,
+}
+local preview = dofile(root .. "rptk_preview.lua")(state, items)
+preview.owner = "session"
+preview.active.preview = {
+  id = "preview", resource = resource, active_revision = "revision",
+}
+preview.cleanup_session({ id = "session" })
+assert(stopped == 0)
+assert(deleted == 1)
+assert(preview.active.preview == nil)
+"""
+    )
+
+
 def test_preview_tick_ignores_transport_jitter_and_forward_catchup():
     run_lua(
         """
