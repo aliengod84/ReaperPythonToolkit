@@ -227,6 +227,7 @@ return function(state, items)
     if current.resource.session_id ~= session.id then
       error("ownership_error:preview belongs to another session")
     end
+    if reaper.GetPlayState() & 1 == 1 then reaper.OnStopButton() end
     items.delete(current.resource)
     if current.pending then items.delete(current.pending) end
     preview.active[id], preview.owner = nil, nil

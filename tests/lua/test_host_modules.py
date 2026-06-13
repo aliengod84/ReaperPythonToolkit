@@ -268,3 +268,40 @@ preview.tick(1.01)
 assert(length_writes == 0)
 """
     )
+
+
+def test_preview_stop_halts_transport_before_deleting_items():
+    run_lua(
+        """
+local actions = {}
+local active = {
+  resource_id = "preview", session_id = "session", item = {},
+}
+local pending = {
+  resource_id = "pending", session_id = "session", item = {},
+}
+reaper = {
+  GetPlayState = function() return 1 end,
+  OnStopButton = function() actions[#actions + 1] = "stop" end,
+  SetProjExtState = function() end,
+  GetSetRepeat = function() return 0 end,
+}
+local state = {}
+local items = {
+  delete = function(resource)
+    actions[#actions + 1] = "delete:" .. resource.resource_id
+  end,
+}
+local preview = dofile(root .. "rptk_preview.lua")(state, items)
+preview.owner = "session"
+preview.active.preview = {
+  id = "preview", resource = active, pending = pending,
+  active_revision = "revision",
+}
+local result = preview.stop({ id = "session" }, "preview")
+assert(result.active == false)
+assert(actions[1] == "stop")
+assert(actions[2] == "delete:preview")
+assert(actions[3] == "delete:pending")
+"""
+    )
