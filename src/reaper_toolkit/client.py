@@ -7,7 +7,10 @@ from collections.abc import Coroutine
 from typing import Any
 
 from .async_client import AsyncReaperClient
+from .errors import CommandTimeoutError
 from .models import ClientIdentity
+
+_BLOCKING_TIMEOUT_GRACE = 1.0
 
 
 class ReaperClient:
@@ -32,7 +35,17 @@ class ReaperClient:
         self._loop.run_forever()
 
     def _run(self, coroutine: Coroutine[Any, Any, Any], timeout: float | None = None) -> Any:
-        return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result(timeout)
+        future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        blocking_timeout = (
+            None if timeout is None else timeout + _BLOCKING_TIMEOUT_GRACE
+        )
+        try:
+            return future.result(blocking_timeout)
+        except concurrent.futures.TimeoutError as exc:
+            future.cancel()
+            raise CommandTimeoutError(
+                f"timed out waiting for command completion after {timeout:g}s"
+            ) from exc
 
     def _call_on_loop(self, function, *args, **kwargs):
         future: concurrent.futures.Future[Any] = concurrent.futures.Future()
