@@ -220,3 +220,51 @@ assert(next(one.active_notes) == nil and #one.udp_queue == 0)
 assert(two.active_notes["9:38"] == true and #two.udp_queue == 1)
 """
     )
+
+
+def test_preview_tick_does_not_rewrite_unchanged_item_length():
+    run_lua(
+        """
+local length_writes = 0
+local item = { position = 0, length = 256, alive = true }
+local resource = {
+  resource_id = "preview", item = item, session_id = "session",
+  length_ppq = 3840,
+}
+reaper = {
+  ValidatePtr = function(value) return value and value.alive end,
+  GetMediaItemInfo_Value = function(value, key)
+    if key == "D_POSITION" then return value.position end
+    if key == "D_LENGTH" then return value.length end
+    return 0
+  end,
+  SetMediaItemInfo_Value = function(value, key, amount)
+    if key == "D_LENGTH" then
+      length_writes = length_writes + 1
+      value.length = amount
+    end
+  end,
+  GetPlayState = function() return 1 end,
+  GetPlayPosition = function() return 1 end,
+  SetProjExtState = function() end,
+  GetSetRepeat = function() return 0 end,
+  UpdateArrange = function() end,
+}
+local state = {
+  time_to_ppq = function(seconds) return seconds * 960 end,
+  ppq_to_time = function(ppq) return ppq / 960 end,
+}
+local items = {
+  delete = function() end,
+  adopt_id = function(value) return value end,
+}
+local preview = dofile(root .. "rptk_preview.lua")(state, items)
+preview.active.preview = {
+  id = "preview", resource = resource, origin = 0, phrase_length = 3840,
+  status = "playing", prepared_at = 0,
+}
+preview.tick(1)
+preview.tick(1.01)
+assert(length_writes == 0)
+"""
+    )

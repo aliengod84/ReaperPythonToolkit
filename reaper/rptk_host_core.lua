@@ -23,6 +23,13 @@ return function(root)
   }, path_separator)
   local json = dofile(root .. "json.lua")
   local protocol = dofile(root .. "rptk_protocol.lua")(json)
+  local socket_io = dofile(root .. "rptk_socket.lua")({
+    chunk_size = 512,
+    max_writes = 64,
+    log = function(message)
+      reaper.ShowConsoleMsg("[RPTK][flush] " .. message .. "\n")
+    end,
+  })
   local sessions = dofile(root .. "rptk_sessions.lua")(protocol)
   local state = dofile(root .. "rptk_state.lua")(sessions)
   local tracks = dofile(root .. "rptk_tracks.lua")(json)
@@ -42,31 +49,6 @@ return function(root)
   local function send(client, value)
     client.outgoing = client.outgoing .. protocol.encode(value)
     if #client.outgoing > protocol.MAX_MESSAGE * 2 then client.close = true end
-  end
-
-  -- This LuaSocket build's send() returns sent=0.0 (success, zero bytes) when
-  -- handed a large buffer, so whole-frame sends never drain and the client times
-  -- out on the handshake / state frames. It only makes progress on SMALL inputs.
-  -- Hand it a fixed-size substring per call (plain send returns a byte count, or
-  -- nil,"timeout",partial), advance the buffer by that count, and loop while
-  -- progress is made so a large frame drains across many small sends in one tick.
-  local SEND_CHUNK = 1024
-  local function flush(client)
-    if client.outgoing == "" then return end
-    for _ = 1, 8192 do
-      if client.outgoing == "" then break end
-      local chunk = client.outgoing:sub(1, SEND_CHUNK)
-      local sent, err, partial = client.socket:send(chunk)
-      local count = math.floor(tonumber(sent or partial) or 0)
-      if count > 0 then
-        client.outgoing = client.outgoing:sub(count + 1)
-      end
-      if not sent and err ~= "timeout" then
-        client.close = true
-        return
-      end
-      if count == 0 then break end  -- no progress this call; resume next tick
-    end
   end
 
   local function close_client(client)
@@ -316,12 +298,13 @@ return function(root)
         accepted_at = now, close = false,
       }] = true
     end
-    udp.poll(now)
-    preview.tick(now)
+    -- Service reliable commands before preview/state maintenance. Reaper runs
+    -- all of this on one defer thread, so MIDI item work must not delay a Stop
+    -- request that is already waiting in the TCP socket.
     for client in pairs(host.clients) do
       if not client.handshake and now - client.accepted_at > 2 then client.close = true end
       read_client(client, now)
-      flush(client)
+      socket_io.flush(client)
       if client.close or (client.close_after_write and client.outgoing == "") then close_client(client) end
     end
     for _, session in ipairs(sessions.expired(now)) do
@@ -329,6 +312,8 @@ return function(root)
         if client.session == session then close_client(client) end
       end
     end
+    udp.poll(now)
+    preview.tick(now)
     if now - host.last_state_at >= 0.1 then
       host.last_state_at = now
       local generation = state.build({}).project_generation

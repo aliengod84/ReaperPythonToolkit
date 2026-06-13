@@ -91,9 +91,11 @@ return function(state, items)
   local function set_item_end(resource, ending_ppq)
     if not item_alive(resource) then return end
     local start = reaper.GetMediaItemInfo_Value(resource.item, "D_POSITION")
-    reaper.SetMediaItemInfo_Value(
-      resource.item, "D_LENGTH", math.max(0, state.ppq_to_time(ending_ppq) - start)
-    )
+    local desired = math.max(0, state.ppq_to_time(ending_ppq) - start)
+    local current = reaper.GetMediaItemInfo_Value(resource.item, "D_LENGTH")
+    if math.abs(current - desired) > 0.000001 then
+      reaper.SetMediaItemInfo_Value(resource.item, "D_LENGTH", desired)
+    end
   end
 
   local function configure_loop(resource)
