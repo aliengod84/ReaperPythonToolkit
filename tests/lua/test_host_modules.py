@@ -301,6 +301,9 @@ preview.active.preview = {
 local result = preview.stop({ id = "session" }, "preview")
 assert(result.active == false)
 assert(actions[1] == "stop")
+assert(#actions == 1)
+preview.tick(1)
+preview.tick(2)
 assert(actions[2] == "delete:preview")
 assert(actions[3] == "delete:pending")
 """
@@ -332,8 +335,8 @@ preview.active.preview = {
 }
 preview.cleanup_session({ id = "session" })
 assert(stopped == 0)
-assert(deleted == 1)
 assert(preview.active.preview == nil)
+assert(deleted == 1)
 """
     )
 

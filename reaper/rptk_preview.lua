@@ -1,11 +1,16 @@
 return function(state, items)
   local preview = {
     active = {}, owner = nil, prior_repeat = nil, prior_metronome = nil,
+    garbage = {},
     repeat_active_key = "preview_repeat_active",
     repeat_prior_key = "preview_repeat_prior",
     metro_active_key = "preview_metronome_active",
     metro_prior_key = "preview_metronome_prior",
   }
+
+  local function defer_delete(resource)
+    if resource then preview.garbage[#preview.garbage + 1] = resource end
+  end
 
   local function save_settings(options)
     options = options or {}
@@ -221,7 +226,7 @@ return function(state, items)
     return public(current)
   end
 
-  function preview.stop(session, id, stop_transport)
+  function preview.stop(session, id, stop_transport, defer_cleanup)
     local current = preview.active[id]
     if not current then return public(nil) end
     if current.resource.session_id ~= session.id then
@@ -230,10 +235,15 @@ return function(state, items)
     if stop_transport ~= false and reaper.GetPlayState() & 1 == 1 then
       reaper.OnStopButton()
     end
-    items.delete(current.resource)
-    if current.pending then items.delete(current.pending) end
     preview.active[id], preview.owner = nil, nil
     restore_settings()
+    if defer_cleanup == false then
+      items.delete(current.resource)
+      if current.pending then items.delete(current.pending) end
+    else
+      defer_delete(current.resource)
+      defer_delete(current.pending)
+    end
     local result = public(nil)
     result.resource_id = id
     result.active_revision = current.active_revision
@@ -245,7 +255,7 @@ return function(state, items)
     for id, current in pairs(preview.active) do
       if current.resource.session_id == session.id then remove[#remove + 1] = id end
     end
-    for _, id in ipairs(remove) do preview.stop(session, id, false) end
+    for _, id in ipairs(remove) do preview.stop(session, id, false, false) end
   end
 
   function preview.cleanup_all()
@@ -254,6 +264,9 @@ return function(state, items)
       if current.pending then items.delete(current.pending) end
     end
     preview.active, preview.owner = {}, nil
+    while #preview.garbage > 0 do
+      items.delete(table.remove(preview.garbage, 1))
+    end
     restore_settings()
   end
 
@@ -307,6 +320,8 @@ return function(state, items)
       preview.owner = nil
       restore_settings()
     end
+    local garbage = table.remove(preview.garbage, 1)
+    if garbage then items.delete(garbage); changed = true end
     return changed
   end
 
