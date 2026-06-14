@@ -215,6 +215,10 @@ class PreviewOptions:
     count_in: bool = True
     repeat_guard: bool = True
     metronome_guard: bool = False
+    # Clear any time/loop selection while previewing so Reaper's "stop at end of
+    # loop" (active when Repeat is off) cannot truncate the preview mid-phrase.
+    # The user's selection is restored when the preview stops.
+    timesel_guard: bool = True
     start_ppq: int | None = None
 
 

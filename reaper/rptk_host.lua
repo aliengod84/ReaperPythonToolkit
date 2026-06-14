@@ -14,22 +14,29 @@ local function toggle(value)
   end
 end
 
-local _, running = reaper.GetProjExtState(0, NAMESPACE, RUNNING)
-if running == "1" then
+-- Determine "is a host already running?" by the authoritative source -- whether
+-- the TCP port is actually bound -- not by the heartbeat ProjExtState. A crashed
+-- or orphaned defer loop can keep the heartbeat fresh while its socket is dead
+-- (a zombie), which used to wedge this action into only ever printing
+-- "stop requested". If bootstrap binds the port, no real host is running and we
+-- take over (clearing any stale flags); if the port is in use, a live host owns
+-- it, so toggle a stop request instead.
+local ok, err = host.bootstrap(9901, 9900)
+if not ok then
   local _, heartbeat = reaper.GetProjExtState(0, NAMESPACE, HEARTBEAT)
   if reaper.time_precise() - (tonumber(heartbeat) or 0) < 2 then
+    -- Port in use AND a live host is heartbeating: this is the toggle-off path.
     reaper.SetProjExtState(0, NAMESPACE, STOP, "1")
     reaper.ShowConsoleMsg("[RPTK] stop requested\n")
     return
   end
+  -- Port in use but no fresh heartbeat: a stuck process holds the port. Surface
+  -- the bind error so the user can act, rather than silently looping.
+  reaper.ShowConsoleMsg("[RPTK] " .. err .. "\n")
+  return
 end
-reaper.SetProjExtState(0, NAMESPACE, RUNNING, "")
-reaper.SetProjExtState(0, NAMESPACE, STOP, "")
-reaper.SetProjExtState(0, NAMESPACE, HEARTBEAT, "")
-
-local ok, err = host.bootstrap(9901, 9900)
-if not ok then reaper.ShowConsoleMsg("[RPTK] " .. err .. "\n"); return end
 reaper.SetProjExtState(0, NAMESPACE, RUNNING, "1")
+reaper.SetProjExtState(0, NAMESPACE, STOP, "")
 toggle(1)
 
 local function cleanup()

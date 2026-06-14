@@ -402,23 +402,24 @@ return function(json, state, tracks)
     for _, id in ipairs(remove) do items.delete(items.resources[id]) end
   end
 
-  local function public(resource)
-    return {
+  local function public(resource, include_metadata)
+    local result = {
       resource_id = resource.resource_id, kind = resource.kind,
       app_id = resource.app_id, session_id = resource.session_id,
       target_guid = resource.target_guid, track_guid = resource.track_guid,
       start_ppq = resource.start_ppq, length_ppq = resource.length_ppq,
-      metadata = resource.metadata or {},
     }
+    if include_metadata ~= false then result.metadata = resource.metadata or {} end
+    return result
   end
 
-  function items.public_state(app_id, kind, target_guid)
+  function items.public_state(app_id, kind, target_guid, include_metadata)
     local result = {}
     for _, value in pairs(items.resources) do
       if (not app_id or value.app_id == app_id) and
         (not kind or value.kind == kind) and
         (not target_guid or value.target_guid == target_guid) then
-        result[#result + 1] = public(value)
+        result[#result + 1] = public(value, include_metadata)
       end
     end
     table.sort(result, function(a, b) return a.resource_id < b.resource_id end)

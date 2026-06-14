@@ -32,7 +32,15 @@ class LineCodec:
             try:
                 value = json.loads(line.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise ProtocolError("invalid UTF-8 JSON message") from exc
+                # Surface the offending bytes to pinpoint wire corruption: the
+                # repr shows non-UTF-8 / spliced bytes, and the length + head/tail
+                # show whether a frame was truncated or two frames collided.
+                preview = bytes(line[:200])
+                tail = bytes(line[-80:]) if len(line) > 200 else b""
+                raise ProtocolError(
+                    f"invalid UTF-8 JSON message ({len(line)} bytes): "
+                    f"head={preview!r}" + (f" tail={tail!r}" if tail else "")
+                ) from exc
             if not isinstance(value, dict):
                 raise ProtocolError("message must be a JSON object")
             messages.append(value)

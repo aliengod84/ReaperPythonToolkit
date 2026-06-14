@@ -22,10 +22,14 @@ return function(root)
     package.cpath,
   }, path_separator)
   local json = dofile(root .. "json.lua")
+  local synclog = dofile(root .. "rptk_synclog.lua")
   local protocol = dofile(root .. "rptk_protocol.lua")(json)
   local socket_io = dofile(root .. "rptk_socket.lua")({
     chunk_size = 512,
-    max_writes = 64,
+    -- Drain up to ~128 KB per flush (was 32 KB). The small 512-byte chunk size
+    -- is kept for LuaSocket safety; raising the write count lets a backed-up
+    -- buffer clear within a tick or two instead of growing across many ticks.
+    max_writes = 256,
     log = function(message)
       reaper.ShowConsoleMsg("[RPTK][flush] " .. message .. "\n")
     end,
@@ -34,7 +38,7 @@ return function(root)
   local state = dofile(root .. "rptk_state.lua")(sessions)
   local tracks = dofile(root .. "rptk_tracks.lua")(json)
   local items = dofile(root .. "rptk_midi_items.lua")(json, state, tracks)
-  local preview = dofile(root .. "rptk_preview.lua")(state, items)
+  local preview = dofile(root .. "rptk_preview.lua")(state, items, synclog)
   local udp = dofile(root .. "rptk_udp.lua")(sessions)
   local ok_socket, socket = pcall(require, "socket")
   if not ok_socket then ok_socket, socket = pcall(require, "socket.core") end
@@ -47,8 +51,19 @@ return function(root)
 
   local function console(message) reaper.ShowConsoleMsg("[RPTK] " .. message .. "\n") end
   local function send(client, value)
-    client.outgoing = client.outgoing .. protocol.encode(value)
-    if #client.outgoing > protocol.MAX_MESSAGE * 2 then client.close = true end
+    local encoded = protocol.encode(value)
+    if value and value.type == "response" then
+      synclog.line("command", string.format(
+        "reply queued type=response request_id=%s ok=%s bytes=%d outgoing_after=%d",
+        tostring(value.request_id), tostring(value.ok), #encoded,
+        #client.outgoing + #encoded
+      ))
+    end
+    client.outgoing = client.outgoing .. encoded
+    if #client.outgoing > protocol.MAX_MESSAGE * 2 then
+      synclog.line("conn", "outgoing buffer over limit -> closing client", true)
+      client.close = true
+    end
   end
 
   local function cleanup_session(session)
@@ -171,7 +186,8 @@ return function(root)
       return {}
     elseif method == "state.get" then
       return state.build(
-        items.public_state(session.client.app_id), preview.public_state(session.id)
+        items.public_state(session.client.app_id, nil, nil, false),
+        preview.public_state(session.id)
       )
     elseif method == "transport.set" then
       local playing = reaper.GetPlayState() & 1 == 1
@@ -312,6 +328,16 @@ return function(root)
       "host %s listening on TCP %d and UDP %d",
       host.version, host.tcp_port, host.udp_port
     ))
+    local synclog_on = synclog.enabled()
+    console("synclog diagnostics: " .. (synclog_on and "ON" or "OFF") ..
+      " (toggle: rptk_synclog_on.lua / rptk_synclog_off.lua, then reload this host)")
+    if synclog_on then
+      -- Record the session boundary; the first line also prints the file path
+      -- once to the console, then the console mirror stays quiet.
+      synclog.line("conn", string.format(
+        "host %s started, TCP %d UDP %d", host.version, host.tcp_port, host.udp_port
+      ))
+    end
     return true
   end
 
@@ -363,7 +389,7 @@ return function(root)
         items.scan()
         host.project_generation = generation
       end
-      local snapshot = state.build(items.public_state())
+      local snapshot = state.build(items.public_state(nil, nil, nil, false))
       local snapshot_sequence = snapshot.state_seq
       snapshot.state_seq = 0
       local encoded = json.encode(snapshot)
@@ -371,15 +397,23 @@ return function(root)
       if state.changed(encoded) then
         snapshot.state_seq = state.sequence_value()
         for client in pairs(host.clients) do
-          if client.session then
+          -- Back-pressure: state events are redundant snapshots. If a client's
+          -- outgoing buffer is already backed up, skip this push rather than pile
+          -- more on top -- otherwise the buffer grows unbounded and command
+          -- replies (prepare/update/stop) get stuck behind it and time out.
+          if client.session and #client.outgoing < protocol.MAX_MESSAGE then
             client.session.event_seq = client.session.event_seq + 1
             local client_snapshot = state.build(
-              items.public_state(client.session.client.app_id),
+              items.public_state(client.session.client.app_id, nil, nil, false),
               preview.public_state(client.session.id)
             )
             client_snapshot.state_seq = snapshot.state_seq
             send(client, protocol.event(
               "state.changed", client.session.event_seq, client_snapshot
+            ))
+          elseif client.session then
+            synclog.line("conn", string.format(
+              "state push skipped: outgoing backed up (%d bytes)", #client.outgoing
             ))
           end
         end

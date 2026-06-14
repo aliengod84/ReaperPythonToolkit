@@ -188,6 +188,11 @@ local inserted = items.insert(session, {
 assert(inserted.start_ppq == 3840 and inserted.length_ppq == 3840)
 assert(cursor == 8)
 assert(inserted.target_guid == "target" and inserted.track_guid == "target")
+local full = items.public_state("com.example.app")
+local lightweight = items.public_state("com.example.app", nil, nil, false)
+assert(full[1].metadata.schema == 3)
+assert(lightweight[1].metadata == nil)
+assert(lightweight[1].resource_id == inserted.resource_id)
 local id = inserted.resource_id
 phrase.revision = string.rep("b", 64)
 local replaced = items.replace(session, {

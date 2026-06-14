@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import sys
 import time
 import uuid
 from collections.abc import Callable
@@ -50,6 +52,16 @@ from .models import (
 from .protocol import LineCodec, ProtocolError, encode_message, request_envelope
 from .transport import DEFAULT_HOST, DEFAULT_TCP_PORT
 from .version import PACKAGE_VERSION, PROTOCOL_MAJOR, PROTOCOL_MINOR
+
+# Lightweight, opt-in protocol tracing (RPTK_TRACE=1) for diagnosing dropped or
+# mismatched responses. Off by default; writes to stderr.
+_TRACE = os.getenv("RPTK_TRACE", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _trace(message: str) -> None:
+    if _TRACE:
+        print(f"[RPTK-TRACE] {message}", file=sys.stderr, flush=True)
+
 
 StatusCallback = Callable[[BridgeStatus], None]
 StateCallback = Callable[[ProjectState], None]
@@ -283,8 +295,10 @@ class AsyncReaperClient:
             async with self._write_lock:
                 self._writer.write(encode_message(request_envelope(request_id, method, body)))
                 await self._writer.drain()
+            _trace(f"sent request method={method} request_id={request_id}")
             return await asyncio.wait_for(future, timeout or self.command_timeout)
         except TimeoutError as exc:
+            _trace(f"TIMEOUT waiting for method={method} request_id={request_id}")
             raise CommandTimeoutError(f"timed out waiting for {method}") from exc
         finally:
             self._pending.pop(request_id, None)
@@ -462,6 +476,12 @@ class AsyncReaperClient:
             while data := await self._reader.read(65536):
                 self._last_traffic = time.monotonic()
                 for message in codec.feed(data):
+                    if _TRACE:
+                        _trace(
+                            f"recv type={message.get('type')} "
+                            f"request_id={message.get('request_id')} "
+                            f"event={message.get('event')}"
+                        )
                     self._handle_message(message)
             raise ConnectionLostError("host closed the connection")
         except (OSError, ProtocolError, ConnectionLostError) as exc:
@@ -475,9 +495,18 @@ class AsyncReaperClient:
             request_id = str(message.get("request_id", ""))
             pending = self._pending.get(request_id)
             if pending is None:
+                _trace(
+                    f"DROPPED response request_id={request_id!r} ok={message.get('ok')} "
+                    f"(no pending match; pending={list(self._pending)})"
+                )
                 return
             method, future = pending
+            _trace(
+                f"matched response method={method} request_id={request_id} "
+                f"ok={message.get('ok')}"
+            )
             if future.done():
+                _trace(f"response arrived but future already done method={method}")
                 return
             if message.get("ok"):
                 future.set_result(dict(message.get("result") or {}))
