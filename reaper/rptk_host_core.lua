@@ -389,15 +389,12 @@ return function(root)
       snapshot.state_seq = 0
       local encoded = json.encode(snapshot)
       snapshot.state_seq = snapshot_sequence
-      local changed = state.changed(encoded)
-      if changed then
+      if state.changed(encoded) then
         snapshot.state_seq = state.sequence_value()
-      end
-      for client in pairs(host.clients) do
-        if client.session and (changed or client.state_pending) then
-          -- State events are replaceable snapshots. Keep at most one pending
-          -- behind socket output, then send the latest state after it drains.
-          if client.outgoing == "" then
+        for client in pairs(host.clients) do
+          -- Heartbeat replies can keep the socket briefly nonempty, so allow a
+          -- small bounded queue rather than starving transport events entirely.
+          if client.session and #client.outgoing < 4096 then
             client.session.event_seq = client.session.event_seq + 1
             local client_snapshot = state.build(
               {},
@@ -407,9 +404,6 @@ return function(root)
             send(client, protocol.event(
               "state.changed", client.session.event_seq, client_snapshot
             ))
-            client.state_pending = false
-          else
-            client.state_pending = true
           end
         end
       end

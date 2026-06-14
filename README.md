@@ -36,8 +36,9 @@ be released, then reloads `rptk_host.lua` without restarting REAPER.
 Transport state snapshots intentionally omit durable resource lists. Use
 `resource.list` for item discovery and metadata; this keeps 10 Hz play-position
 updates small regardless of how many tagged MIDI items exist in the project.
-If a client's socket still has pending output, newer transport snapshots replace
-the pending update instead of queuing a phase history behind it.
+Transport snapshots use a small bounded per-client output allowance. This avoids
+both unbounded phase history and starvation when heartbeat replies briefly keep
+the non-blocking socket busy.
 
 The repository intentionally does not bundle LuaSocket binaries. The host does
 support a project-local `reaper/lua/` directory, matching the layout previously
