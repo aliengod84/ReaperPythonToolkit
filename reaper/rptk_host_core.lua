@@ -389,14 +389,15 @@ return function(root)
       snapshot.state_seq = 0
       local encoded = json.encode(snapshot)
       snapshot.state_seq = snapshot_sequence
-      if state.changed(encoded) then
+      local changed = state.changed(encoded)
+      if changed then
         snapshot.state_seq = state.sequence_value()
-        for client in pairs(host.clients) do
-          -- Back-pressure: state events are redundant snapshots. If a client's
-          -- outgoing buffer is already backed up, skip this push rather than pile
-          -- more on top -- otherwise the buffer grows unbounded and command
-          -- replies (prepare/update/stop) get stuck behind it and time out.
-          if client.session and #client.outgoing < protocol.MAX_MESSAGE then
+      end
+      for client in pairs(host.clients) do
+        if client.session and (changed or client.state_pending) then
+          -- State events are replaceable snapshots. Keep at most one pending
+          -- behind socket output, then send the latest state after it drains.
+          if client.outgoing == "" then
             client.session.event_seq = client.session.event_seq + 1
             local client_snapshot = state.build(
               {},
@@ -406,10 +407,9 @@ return function(root)
             send(client, protocol.event(
               "state.changed", client.session.event_seq, client_snapshot
             ))
-          elseif client.session then
-            synclog.line("conn", string.format(
-              "state push skipped: outgoing backed up (%d bytes)", #client.outgoing
-            ))
+            client.state_pending = false
+          else
+            client.state_pending = true
           end
         end
       end
