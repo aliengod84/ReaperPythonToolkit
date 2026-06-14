@@ -33,6 +33,10 @@ start or stop the host. Load `rptk_host_reload.lua` as a second action when
 developing the host; it requests a clean stop, waits for the TCP/UDP sockets to
 be released, then reloads `rptk_host.lua` without restarting REAPER.
 
+Transport state snapshots intentionally omit durable resource lists. Use
+`resource.list` for item discovery and metadata; this keeps 10 Hz play-position
+updates small regardless of how many tagged MIDI items exist in the project.
+
 The repository intentionally does not bundle LuaSocket binaries. The host does
 support a project-local `reaper/lua/` directory, matching the layout previously
 used by Metal MIDI Generator v3. See

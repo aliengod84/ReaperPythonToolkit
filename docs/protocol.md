@@ -37,3 +37,8 @@ resource.list
 Bindings are scoped by current project, `app_id`, and opaque role. Resource
 queries are implicitly restricted to the connected app. Durable MIDI items are
 rediscovered from exact RPTK tags; names are never treated as ownership.
+
+`hello_ack.initial_state`, `state.get`, and `state.changed` are transport-focused
+snapshots and omit durable resources. Clients use `resource.list` when they need
+item discovery or metadata. This keeps periodic play-position events bounded as
+the number and metadata size of tagged items grows.

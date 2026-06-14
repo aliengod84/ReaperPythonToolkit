@@ -149,9 +149,7 @@ return function(root)
         heartbeat_interval_ms = 1000, udp_token = session.udp_token,
         udp_host = "127.0.0.1", udp_port = host.udp_port,
       },
-      initial_state = state.build(
-        items.public_state(session.client.app_id), preview.public_state(session.id)
-      ),
+      initial_state = state.build({}, preview.public_state(session.id)),
     })
   end
 
@@ -185,10 +183,7 @@ return function(root)
       session.close_requested = true
       return {}
     elseif method == "state.get" then
-      return state.build(
-        items.public_state(session.client.app_id, nil, nil, false),
-        preview.public_state(session.id)
-      )
+      return state.build({}, preview.public_state(session.id))
     elseif method == "transport.set" then
       local playing = reaper.GetPlayState() & 1 == 1
       if payload.playing and not playing then reaper.OnPlayButton() end
@@ -389,7 +384,7 @@ return function(root)
         items.scan()
         host.project_generation = generation
       end
-      local snapshot = state.build(items.public_state(nil, nil, nil, false))
+      local snapshot = state.build({})
       local snapshot_sequence = snapshot.state_seq
       snapshot.state_seq = 0
       local encoded = json.encode(snapshot)
@@ -404,7 +399,7 @@ return function(root)
           if client.session and #client.outgoing < protocol.MAX_MESSAGE then
             client.session.event_seq = client.session.event_seq + 1
             local client_snapshot = state.build(
-              items.public_state(client.session.client.app_id, nil, nil, false),
+              {},
               preview.public_state(client.session.id)
             )
             client_snapshot.state_seq = snapshot.state_seq
