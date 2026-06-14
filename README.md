@@ -28,8 +28,10 @@ python -m pip install -e C:\Github\ReaperPythonToolkit
 
 Install LuaSocket for the Lua version embedded in Reaper. Copy the complete
 `reaper/` directory into Reaper's Scripts directory, then use **Actions > Show
-action list > ReaScript: Load** to load `rptk_host.lua`. Run that one action.
-Run it again to request a clean stop.
+action list > ReaScript: Load** to load `rptk_host.lua`. Run that action to
+start or stop the host. Load `rptk_host_reload.lua` as a second action when
+developing the host; it requests a clean stop, waits for the TCP/UDP sockets to
+be released, then reloads `rptk_host.lua` without restarting REAPER.
 
 The repository intentionally does not bundle LuaSocket binaries. The host does
 support a project-local `reaper/lua/` directory, matching the layout previously

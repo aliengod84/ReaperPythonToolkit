@@ -330,7 +330,7 @@ return function(root)
     ))
     local synclog_on = synclog.enabled()
     console("synclog diagnostics: " .. (synclog_on and "ON" or "OFF") ..
-      " (toggle: rptk_synclog_on.lua / rptk_synclog_off.lua, then reload this host)")
+      " (toggle diagnostics, then run rptk_host_reload.lua)")
     if synclog_on then
       -- Record the session boundary; the first line also prints the file path
       -- once to the console, then the console mirror stays quiet.

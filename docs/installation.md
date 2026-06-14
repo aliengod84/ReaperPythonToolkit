@@ -5,10 +5,13 @@
 2. Install LuaSocket for the Lua runtime and architecture used by Reaper.
 3. Copy `reaper/` intact to a stable directory under the Reaper resource path.
 4. Load `rptk_host.lua` from Reaper's Action List and run it.
-5. Confirm `[RPTK] host 0.2.0 listening on TCP 9901 and UDP 9900`.
+5. Optionally load `rptk_host_reload.lua` for one-click in-process reloads.
+6. Confirm `[RPTK] host 0.2.0 listening on TCP 9901 and UDP 9900`.
 
-For upgrades, run the action once to stop the old host, replace all RPTK Lua
-files together, and run the action again. Do not mix host module versions.
+For upgrades, replace all RPTK Lua files together, then run
+`rptk_host_reload.lua`. The reload action cleanly stops the old defer loop,
+waits for its sockets to close, and starts the updated host. Do not mix host
+module versions.
 
 The simplest Windows setup is to create `reaper/lua/` beside `rptk_host.lua`
 and copy the same LuaSocket layout used by Metal MIDI Generator v3:
